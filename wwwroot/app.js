@@ -4,9 +4,10 @@ const adminView = $("#admin-view");
 const attendanceNav = $("#attendance-nav");
 const adminNav = $("#admin-nav");
 const toast = $("#toast");
-let currentForm = { people: [], fields: [] };
+let currentForm = { people: [], fields: [], rules: null };
 let adminData = null;
 let toastTimer;
+let monthlyReportSequence = 0;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -49,20 +50,25 @@ function setView(view) {
     openAdmin();
   } else {
     window.history.replaceState(null, "", window.location.pathname);
+    loadForm().catch(error => showToast(error.message, true));
   }
 }
 
 function renderCustomInput(field) {
   const id = `custom-${field.id}`;
-  const label = `<label class="field-label" for="${id}">${escapeHtml(field.label)} <span class="optional-label">Opsional</span></label>`;
+  const requirement = field.required
+    ? '<span class="required-star">*</span><span class="optional-label">Wajib diisi</span>'
+    : '<span class="optional-label">Opsional</span>';
+  const requiredAttribute = field.required ? " required" : "";
+  const label = `<label class="field-label" for="${id}">${escapeHtml(field.label)} ${requirement}</label>`;
   if (field.type === "select") {
     const choices = field.options.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join("");
-    return `${label}<div class="select-wrap"><select id="${id}" data-field-id="${field.id}"><option value="">Pilih opsi</option>${choices}</select><span class="select-chevron" aria-hidden="true">⌄</span></div>`;
+    return `${label}<div class="select-wrap"><select id="${id}" data-field-id="${field.id}"${requiredAttribute}><option value="">Pilih opsi</option>${choices}</select><span class="select-chevron" aria-hidden="true">⌄</span></div>`;
   }
   if (field.type === "checkbox") {
-    return `<label class="checkbox-field" for="${id}"><input id="${id}" type="checkbox" data-field-id="${field.id}"><span>${escapeHtml(field.label)}</span></label>`;
+    return `<label class="checkbox-field custom-checkbox" for="${id}"><input id="${id}" type="checkbox" data-field-id="${field.id}"${requiredAttribute}><span>${escapeHtml(field.label)}</span>${field.required ? '<span class="checkbox-requirement">Wajib</span>' : ""}</label>`;
   }
-  return `${label}<input id="${id}" type="${escapeHtml(field.type)}" data-field-id="${field.id}" ${field.type === "number" ? 'step="any"' : ""} placeholder="${field.type === "text" ? "Isi " + escapeHtml(field.label.toLowerCase()) : ""}">`;
+  return `${label}<input id="${id}" type="${escapeHtml(field.type)}" data-field-id="${field.id}"${requiredAttribute} ${field.type === "number" ? 'step="any"' : ""} placeholder="${field.type === "text" ? "Isi " + escapeHtml(field.label.toLowerCase()) : ""}">`;
 }
 
 async function loadForm() {
@@ -72,6 +78,8 @@ async function loadForm() {
     `<option value="${escapeHtml(person.name)}">${escapeHtml(person.name)}</option>`
   ).join("")}`;
   $("#custom-fields").innerHTML = currentForm.fields.map(renderCustomInput).join("");
+  const rules = currentForm.rules;
+  $("#attendance-rules-hint").textContent = `Jam masuk ${rules.startTime}, jam pulang ${rules.endTime}. Absensi Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.`;
   if (!currentForm.people.length) {
     select.disabled = true;
     select.innerHTML = `<option value="">Nama belum ditambahkan oleh admin</option>`;
@@ -142,9 +150,10 @@ function renderRecord(record) {
   const photo = record.hasPhoto
     ? `<a class="photo-link" href="/api/admin/attendance/${record.id}/photo" target="_blank" rel="noopener">Lihat foto ↗</a>`
     : `<span class="muted-cell">—</span>`;
+  const attendanceType = record.type === "pulang" ? "Pulang" : "Datang";
   return `<tr>
     <td><span class="record-date">${escapeHtml(formatDate(record.createdAt))}</span><span class="record-time">${escapeHtml(formatTime(record.createdAt))}</span></td>
-    <td><strong>${escapeHtml(record.name)}</strong></td>
+    <td><strong>${escapeHtml(record.name)}</strong><span class="record-type">${attendanceType}</span></td>
     <td><span class="record-note">${escapeHtml(record.note || "—")}</span>${custom}</td>
     <td>${photo}</td>
   </tr>`;
@@ -154,6 +163,8 @@ function renderDashboard(data) {
   const days = data.dailyCounts || [];
   const maxCount = Math.max(1, ...days.map(day => day.count));
   const fieldTypes = { text: "Teks", number: "Angka", date: "Tanggal", select: "Pilihan", checkbox: "Centang" };
+  const currentMonth = data.today.slice(0, 7);
+  const rules = data.rules;
   $("#admin-dashboard").innerHTML = `
     <div class="admin-heading">
       <div>
@@ -185,15 +196,35 @@ function renderDashboard(data) {
           <button class="text-button" data-admin-tab="settings" type="button">Kelola formulir <span aria-hidden="true">→</span></button>
         </section>
       </div>
+      <section class="panel-card monthly-report-card">
+        <div class="panel-title monthly-report-heading">
+          <div><span class="step-label">REKAP PER KARYAWAN</span><h2>Rekap kehadiran bulanan</h2></div>
+          <label class="month-picker-label" for="summary-month">Pilih bulan<input id="summary-month" type="month" value="${currentMonth}" max="${currentMonth}" required></label>
+        </div>
+        <p id="monthly-report-note" class="settings-description">Ringkasan keterlambatan, kedatangan awal, pulang terlambat, dan hari tanpa kehadiran.</p>
+        <div id="monthly-report-content" class="table-scroll"><p class="empty-cell">Memuat rekap bulanan…</p></div>
+      </section>
       <section class="panel-card records-card">
         <div class="panel-title records-title"><div><span class="step-label">AKTIVITAS TERBARU</span><h2>Riwayat absensi</h2></div><span class="records-count">${data.records.length} terbaru</span></div>
-        <div class="table-scroll"><table><thead><tr><th>Waktu</th><th>Nama</th><th>Keterangan &amp; kolom</th><th>Foto</th></tr></thead>
+        <div class="table-scroll"><table><thead><tr><th>Waktu</th><th>Nama / jenis</th><th>Keterangan &amp; kolom</th><th>Foto</th></tr></thead>
           <tbody>${data.records.length ? data.records.map(renderRecord).join("") : '<tr><td colspan="4" class="empty-cell">Belum ada data absensi.</td></tr>'}</tbody>
         </table></div>
       </section>
     </section>
     <section id="settings-panel" class="admin-panel hidden">
       <div class="settings-grid">
+        <section class="panel-card settings-card rules-card">
+          <div class="panel-title"><div><span class="step-label">JADWAL &amp; KETERLAMBATAN</span><h2>Aturan absensi</h2></div><span class="settings-count">Aturan aktif</span></div>
+          <p class="settings-description">Aturan ini berlaku untuk semua peserta dan dipakai menghitung ulang rekap bulan sebelumnya. Jam mengikuti waktu server; jam pulang harus pada hari yang sama dengan jam masuk.</p>
+          <form id="attendance-rules-form" class="rules-form">
+            <label class="field-label" for="shift-start">Jam masuk</label><input id="shift-start" name="startTime" type="time" value="${escapeHtml(rules.startTime)}" required>
+            <label class="field-label" for="shift-end">Jam pulang</label><input id="shift-end" name="endTime" type="time" value="${escapeHtml(rules.endTime)}" required>
+            <label class="field-label" for="late-tolerance">Maksimal toleransi keterlambatan (menit)</label><input id="late-tolerance" name="toleranceMinutes" type="number" min="0" max="180" value="${rules.toleranceMinutes}" required>
+            <label class="field-label" for="late-limit">Batas akhir terlambat (menit setelah jam masuk)</label><input id="late-limit" name="lateLimitMinutes" type="number" min="1" max="360" value="${rules.lateLimitMinutes}" required>
+            <p class="form-hint rules-explanation">Datang sampai toleransi tidak terlambat; setelah toleransi hingga batas akhir dihitung terlambat; lewat batas akhir dihitung tidak masuk.</p>
+            <button class="button button-primary" type="submit">Simpan aturan</button>
+          </form>
+        </section>
         <section class="panel-card settings-card">
           <div class="panel-title"><div><span class="step-label">DAFTAR PILIHAN</span><h2>Nama peserta</h2></div><span class="settings-count">${data.people.length}</span></div>
           <p class="settings-description">Nama ini akan muncul di dropdown formulir absensi.</p>
@@ -208,9 +239,10 @@ function renderDashboard(data) {
             <label class="field-label" for="field-type">Jenis input</label>
             <div class="select-wrap"><select id="field-type" name="type"><option value="text">Teks</option><option value="number">Angka</option><option value="date">Tanggal</option><option value="select">Dropdown pilihan</option><option value="checkbox">Centang</option></select><span class="select-chevron" aria-hidden="true">⌄</span></div>
             <div id="field-options-wrap" class="hidden"><label class="field-label" for="field-options">Pilihan dropdown</label><input id="field-options" name="options" placeholder="Hadir, Izin, Sakit"><span class="form-hint">Pisahkan setiap pilihan dengan koma.</span></div>
+            <label class="checkbox-field setting-required" for="field-required"><input id="field-required" name="required" type="checkbox"><span>Wajib diisi oleh peserta</span></label>
             <button class="button button-primary" type="submit">Tambah kolom <span aria-hidden="true">+</span></button>
           </form>
-          <ul class="manage-list field-list">${data.fields.length ? data.fields.map(field => `<li><span><strong>${escapeHtml(field.label)}</strong><small>${escapeHtml(fieldTypes[field.type] || field.type)}${field.type === "select" ? ` · ${field.options.map(escapeHtml).join(", ")}` : ""}</small></span><button class="icon-button" data-delete-field="${field.id}" type="button" aria-label="Hapus kolom ${escapeHtml(field.label)}">×</button></li>`).join("") : '<li class="list-empty">Belum ada kolom tambahan.</li>'}</ul>
+          <ul class="manage-list field-list">${data.fields.length ? data.fields.map(field => `<li><span><strong>${escapeHtml(field.label)}</strong><small>${escapeHtml(fieldTypes[field.type] || field.type)} · ${field.required ? "Wajib diisi" : "Opsional"}${field.type === "select" ? ` · ${field.options.map(escapeHtml).join(", ")}` : ""}</small></span><button class="icon-button" data-delete-field="${field.id}" type="button" aria-label="Hapus kolom ${escapeHtml(field.label)}">×</button></li>`).join("") : '<li class="list-empty">Belum ada kolom tambahan.</li>'}</ul>
         </section>
         <section class="panel-card settings-card password-card">
           <div><span class="step-label">KEAMANAN</span><h2>Ubah kata sandi admin</h2><p class="settings-description">Gunakan kata sandi baru minimal 12 karakter.</p></div>
@@ -223,6 +255,8 @@ function renderDashboard(data) {
       </div>
     </section>`;
   $("#field-type").addEventListener("change", event => $("#field-options-wrap").classList.toggle("hidden", event.target.value !== "select"));
+  $("#summary-month").addEventListener("change", event => loadMonthlyReport(event.target.value));
+  loadMonthlyReport(currentMonth);
 }
 
 function formatDate(value) {
@@ -233,6 +267,40 @@ function formatTime(value) {
 }
 function formatShortDate(value) {
   return new Date(`${value}T12:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+}
+
+function formatMonth(value) {
+  const [year, month] = value.split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+}
+
+async function loadMonthlyReport(month) {
+  const sequence = ++monthlyReportSequence;
+  const content = $("#monthly-report-content");
+  if (!content) return;
+  content.innerHTML = '<p class="empty-cell">Memuat rekap bulanan…</p>';
+  try {
+    const report = await api(`/api/admin/summary?month=${encodeURIComponent(month)}`);
+    if (sequence !== monthlyReportSequence || !$("#monthly-report-content")) return;
+    const pendingNote = report.daysPending
+      ? report.currentDayIncluded
+        ? ` · ${report.daysPending} hari tersisa di bulan ini belum direkap`
+        : ` · hari ini menunggu jam pulang (${report.rules.endTime}), ${report.daysPending} hari belum direkap`
+      : "";
+    const note = `Rekap ${formatMonth(report.month)} · ${report.daysIncluded} hari kerja kalender selesai dihitung${pendingNote}. Tidak masuk mencakup tidak mengisi Datang atau Datang melewati batas keterlambatan.`;
+    $("#monthly-report-note").textContent = note;
+    content.innerHTML = `
+      <table class="monthly-table">
+        <thead><tr><th>Nama karyawan</th><th>Terlambat</th><th>Masuk awal</th><th>Pulang terlambat</th><th>Tidak masuk / libur</th></tr></thead>
+        <tbody>${report.employees.length ? report.employees.map(employee => `<tr>
+          <td><strong>${escapeHtml(employee.name)}</strong></td>
+          <td>${employee.late}</td><td>${employee.early}</td><td>${employee.lateDeparture}</td><td>${employee.absent}</td>
+        </tr>`).join("") : '<tr><td colspan="5" class="empty-cell">Belum ada nama karyawan.</td></tr>'}</tbody>
+      </table>`;
+  } catch (error) {
+    if (sequence !== monthlyReportSequence || !$("#monthly-report-content")) return;
+    content.innerHTML = `<p class="empty-cell">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 async function refreshDashboard() {
@@ -264,6 +332,7 @@ $("#attendance-form").addEventListener("submit", async event => {
   }
   const body = new FormData();
   body.append("name", $("#person-select").value);
+  body.append("attendanceType", $("#attendance-type").value);
   body.append("note", $("#attendance-note").value);
   body.append("values", JSON.stringify(values));
   const photo = $("#photo-input").files[0];
@@ -294,9 +363,9 @@ $("#photo-input").addEventListener("change", event => {
     preview.removeAttribute("src");
     return;
   }
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 3.5 * 1024 * 1024) {
     event.target.value = "";
-    showToast("Pilih foto JPG, PNG, atau WebP dengan ukuran maksimal 5 MB.", true);
+    showToast("Pilih foto JPG, PNG, atau WebP dengan ukuran maksimal 3,5 MiB.", true);
     return;
   }
   $("#photo-name").textContent = file.name;
@@ -367,7 +436,10 @@ document.addEventListener("submit", async event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(form));
     try {
-      await api("/api/admin/fields", { method: "POST", body: JSON.stringify(data) });
+      await api("/api/admin/fields", {
+        method: "POST",
+        body: JSON.stringify({ ...data, required: $("#field-required", form).checked })
+      });
       await refreshDashboard();
       await loadForm();
       showToast("Kolom berhasil ditambahkan.");
@@ -382,6 +454,24 @@ document.addEventListener("submit", async event => {
       form.reset();
       showToast(result.message);
       await openAdmin();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  } else if (form.id === "attendance-rules-form") {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const result = await api("/api/admin/rules", {
+        method: "POST",
+        body: JSON.stringify({
+          ...data,
+          toleranceMinutes: Number(data.toleranceMinutes),
+          lateLimitMinutes: Number(data.lateLimitMinutes)
+        })
+      });
+      showToast(result.message);
+      await refreshDashboard();
+      await loadForm();
     } catch (error) {
       showToast(error.message, true);
     }

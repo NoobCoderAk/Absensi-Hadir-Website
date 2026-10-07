@@ -1,33 +1,61 @@
 # Hadir — aplikasi absensi
 
-Aplikasi absensi berbasis JavaScript dengan Node.js, Express, dan SQLite. Formulir absensi dapat dibuka tanpa login; pengaturan, riwayat, foto, dan analisis hanya tersedia setelah admin masuk.
+Aplikasi absensi berbasis JavaScript. Frontend statis di-host Netlify, API berjalan sebagai Netlify Function, database menggunakan Supabase PostgreSQL, dan foto disimpan di Supabase Storage. Form absensi tidak memerlukan login; panel pengaturan dan analisis hanya tersedia untuk admin.
 
-## Menjalankan aplikasi
+## Deploy ke Netlify dan Supabase
 
-1. Pasang Node.js 20 atau yang lebih baru.
-2. Dari folder proyek, pasang dependensi dan jalankan di PowerShell menggunakan `npm.cmd`. Di Windows, perintah `npm` dapat memilih skrip PowerShell `npm.ps1`, yang mungkin diblokir oleh Execution Policy:
+### 1. Siapkan database Supabase
+
+1. Buat project Supabase baru.
+2. Buka **SQL Editor**, lalu jalankan seluruh isi [`supabase/schema.sql`](./supabase/schema.sql). Langkah ini membuat tabel kosong, aturan default absensi, pembatasan akses, rate limiter admin, dan bucket privat `attendance-photos`.
+3. Dari **Project Settings → API**, salin **Project URL** dan **service_role key**. Jangan pernah menaruh service role key di kode browser, repositori, atau variabel yang berawalan `VITE_`/`NEXT_PUBLIC_`.
+
+### 2. Deploy situs di Netlify
+
+1. Hubungkan repositori ini ke Netlify. Konfigurasi pada `netlify.toml` mengatur folder publik, fungsi API, serta rewrite `/api/*`.
+2. Di **Site configuration → Environment variables**, tambahkan:
+   - `SUPABASE_URL`: Project URL Supabase.
+   - `SUPABASE_SERVICE_ROLE_KEY`: service role key dari Supabase.
+   - `SESSION_SECRET`: secret acak minimal 32 byte. Buat dengan `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`.
+   - `APP_TIME_ZONE`: `Asia/Makassar` untuk zona UTC+08. Ubah jika lokasi operasional memakai zona waktu lain yang valid, misalnya `Asia/Jakarta` atau `Asia/Jayapura`.
+   - `COOKIE_SECURE`: `true`.
+   - `TRUST_PROXY`: `true`.
+3. Deploy ulang setelah mengisi environment variables.
+4. Buka situs, masuk ke tab **Admin**, lalu buat akun admin pertama dengan kata sandi minimal 12 karakter. Buat akun sebelum membagikan tautan absensi.
+5. Tambahkan nama karyawan dan kolom formulir dari **Pengaturan formulir**.
+
+Database Supabase baru dimulai kosong. Database SQLite lokal di `data/absensi.db` dan kunci sesi lokal tidak dipindahkan maupun dihapus.
+
+### Pengembangan lokal
+
+1. Pasang Node.js 22 atau yang lebih baru.
+2. Salin `.env.example` menjadi `.env`, lalu isi variabel Supabase dan secret di atas. File `.env` diabaikan Git.
+3. Instal dependensi dan jalankan server:
 
    ```powershell
    npm.cmd install
    npm.cmd start
    ```
 
-3. Buka `http://localhost:5080`.
-4. Buka **Admin** untuk membuat username dan kata sandi admin pertama (minimal 12 karakter). Lakukan ini sebelum membagikan alamat aplikasi.
-5. Tambahkan nama peserta dan kolom formulir dari **Pengaturan formulir**.
+4. Buka `http://localhost:5080`. Untuk menguji rewrite dan fungsi Netlify secara lokal, instal Netlify CLI secara terpisah lalu jalankan `netlify dev`.
 
-Server mendengarkan di semua antarmuka jaringan pada port `5080`, agar perangkat lain di jaringan yang sama dapat mengaksesnya melalui alamat IP komputer server, misalnya `http://192.168.1.10:5080`. Atur firewall jaringan seperlunya. Untuk akses melalui internet, tempatkan aplikasi di belakang reverse proxy dengan HTTPS dan setel `COOKIE_SECURE=true` serta `TRUST_PROXY=true`; formulir absensi memang tidak meminta login.
+## Fitur dan aturan
 
-## Penyimpanan dan fitur
+- Foto JPG, PNG, atau WebP wajib diunggah. Batas file adalah 3,5 MiB agar formulir multipart tetap di bawah batas payload Netlify Functions.
+- Setiap absensi wajib memilih **Datang** atau **Pulang**. Setiap karyawan hanya dapat mengirim satu absensi untuk tiap jenis pada tanggal yang sama.
+- Admin dapat menambah/menghapus nama, menambahkan kolom bertipe teks, angka, tanggal, dropdown, atau centang, serta memilih apakah kolom tambahan wajib diisi.
+- Aturan awal: jam masuk 08.00, jam pulang 17.00, toleransi 5 menit, batas terlambat 15 menit. Admin dapat mengubah aturan ini. Jam pulang harus lebih akhir daripada jam masuk di hari yang sama.
+- Datang sampai batas toleransi tidak dihitung terlambat; lewat toleransi sampai batas terlambat dihitung terlambat; setelah batas terlambat dihitung tidak masuk. Aturan aktif juga diterapkan pada rekap bulan sebelumnya.
+- Rekap bulanan menampilkan terlambat, masuk awal, pulang terlambat, serta tidak masuk/libur. Tidak masuk dihitung bila tidak ada absensi Datang atau absensi Datang melewati batas. Hari ini belum dihitung tidak masuk sampai jam pulang, kecuali absensi Datang yang sudah melewati batas.
+- Tanggal dan jam absensi dihitung memakai `APP_TIME_ZONE` (default `Asia/Makassar`), bukan zona waktu sementara mesin server Netlify.
+- Data foto berada di bucket Supabase Storage privat. Tautan foto panel admin ditandatangani dan hanya berlaku singkat.
+- Tabel database mengaktifkan Row Level Security tanpa akses langsung untuk pengguna anonim; API memakai service role key hanya di lingkungan server.
+- Kata sandi admin disimpan sebagai hash scrypt. Sesi memakai cookie HTTP-only, SameSite Strict, berdurasi delapan jam, serta ditandatangani `SESSION_SECRET`.
+- Percobaan pembuatan akun dan login admin dibatasi hingga lima kali per menit per alamat IP dengan penghitung atomik di database.
 
-- Database berada di `data/absensi.db`; foto JPG, PNG, dan WebP (maksimal 5 MB) tersimpan sebagai BLOB di database.
-- SQLite memakai WebAssembly melalui paket `sql.js`, sehingga tidak memerlukan kompilasi native.
-- Admin dapat menambah/menghapus nama, serta menambahkan kolom bertipe teks, angka, tanggal, dropdown, atau centang.
-- Panel admin menampilkan jumlah absensi, tren tujuh hari, riwayat terbaru, dan foto yang diunggah.
-- Perhitungan harian dan tren mengikuti zona waktu komputer server.
-- Kata sandi admin disimpan sebagai hash scrypt, bukan teks biasa. Sesi admin ditandatangani server, memakai cookie HTTP-only, dan kedaluwarsa setelah delapan jam.
-- Autentikasi admin dibatasi hingga lima percobaan per menit per alamat IP.
-- Data admin dari database versi C# lama yang menggunakan PBKDF2 tetap dapat dipakai; perubahan kata sandi mengalihkannya ke scrypt.
-- Untuk mencadangkan data, hentikan aplikasi lalu salin `data/absensi.db` ke lokasi cadangan yang aman.
+## Operasional dan keamanan
 
-Jangan menghapus `data/absensi.db` atau `data/session-secret.key` jika ingin mempertahankan data dan sesi admin. Database SQLite dari versi C# sebelumnya dapat digunakan langsung. Jika lupa kata sandi admin, administrator server dapat menghapus baris admin dari tabel `admins` menggunakan SQLite; setelah itu admin dapat membuat akun baru tanpa menghapus data absensi. Setiap perubahan database disimpan ke disk secara langsung.
+- Simpan `SUPABASE_SERVICE_ROLE_KEY` dan `SESSION_SECRET` sebagai rahasia environment Netlify. Jika `SESSION_SECRET` berubah, sesi admin aktif akan tidak berlaku.
+- Atur backup database dan Storage dari project Supabase, dan pantau kuota penyimpanan karena foto tetap menambah penggunaan storage.
+- Jangan membuat bucket foto publik atau menambahkan policy anonim untuk tabel aplikasi.
+- Untuk menonaktifkan akses, hapus atau ubah environment variables di Netlify dan gunakan pengaturan project Supabase.
