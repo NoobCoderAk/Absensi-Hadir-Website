@@ -118,6 +118,18 @@ function renderAuth(configured) {
     </section>`;
 }
 
+function renderAdminError(error) {
+  $("#admin-auth").innerHTML = `
+    <section class="auth-card">
+      <span class="step-label">AREA TERBATAS <span>ADMIN</span></span>
+      <div class="auth-symbol" aria-hidden="true">!</div>
+      <h1>Panel admin belum dapat dimuat.</h1>
+      <p>Periksa koneksi API Netlify, environment variables Supabase, dan apakah skema database sudah dijalankan.</p>
+      <div class="auth-error" role="alert">${escapeHtml(error.message)}${error.status ? ` (HTTP ${error.status})` : ""}</div>
+      <button class="button button-primary" data-retry-admin type="button">Coba lagi <span aria-hidden="true">→</span></button>
+    </section>`;
+}
+
 async function openAdmin() {
   adminData = null;
   $("#admin-dashboard").classList.add("hidden");
@@ -130,6 +142,7 @@ async function openAdmin() {
     $("#admin-dashboard").classList.remove("hidden");
   } catch (error) {
     if (error.status !== 401) {
+      renderAdminError(error);
       showToast(error.message, true);
       return;
     }
@@ -137,6 +150,7 @@ async function openAdmin() {
       const status = await api("/api/admin/status");
       renderAuth(status.configured);
     } catch (statusError) {
+      renderAdminError(statusError);
       showToast(statusError.message, true);
     }
   }
@@ -376,6 +390,7 @@ $("#photo-input").addEventListener("change", event => {
 document.addEventListener("click", async event => {
   const adminLink = event.target.closest("[data-open-admin]");
   if (adminLink) return setView("admin");
+  if (event.target.closest("[data-retry-admin]")) return openAdmin();
   const tab = event.target.closest("[data-admin-tab]");
   if (tab && adminData) return setAdminTab(tab.dataset.adminTab);
   if (event.target.closest("#logout-button")) {
