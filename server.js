@@ -25,7 +25,7 @@ const PHOTO_BUCKET = "attendance-photos";
 const app = express();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_PHOTO_SIZE, files: 1, fields: 4, fieldSize: 512 * 1024 }
+  limits: { fileSize: MAX_PHOTO_SIZE, files: 1, fields: 5, fieldSize: 512 * 1024 }
 });
 let supabase;
 let sessionSecret;
@@ -885,7 +885,9 @@ app.use((error, _request, response, _next) => {
   if (error instanceof multer.MulterError) {
     const message = error.code === "LIMIT_FILE_SIZE"
       ? "Ukuran foto maksimal 3,5 MiB."
-      : "Batas formulir terlampaui. Periksa kembali data yang dikirim.";
+      : error.code === "LIMIT_FIELD_COUNT"
+        ? "Jumlah data formulir melebihi batas."
+        : "Batas formulir terlampaui. Periksa kembali data yang dikirim.";
     return sendError(response, 400, message);
   }
   if (error.type === "entity.too.large") return sendError(response, 413, "Ukuran data yang dikirim melebihi batas.");
