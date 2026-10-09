@@ -28,7 +28,12 @@ Database Supabase baru dimulai kosong. Database SQLite lokal di `data/absensi.db
 
 ### Memperbarui project Supabase yang sudah dibuat
 
-Jika skema dasar atau migrasi jadwal sebelumnya sudah pernah dijalankan, jangan jalankan ulang schema penuh. Jalankan [`supabase/migrations/20261009_employee_selected_schedule.sql`](./supabase/migrations/20261009_employee_selected_schedule.sql) melalui **SQL Editor** Supabase sebelum deploy kode terbaru. Migrasi aman dijalankan ulang dan menambahkan shift pada setiap catatan absensi. Catatan lama memakai kategori yang dahulu ditetapkan untuk karyawan; jika informasi itu tidak tersedia, catatan lama diisi kategori **Karyawan Shift Pagi**. Migrasi juga membuat pengunci database agar satu karyawan tidak dapat menyimpan dua kategori shift berbeda pada tanggal yang sama, termasuk bila dua permintaan masuk bersamaan.
+Jika skema dasar atau migrasi jadwal sebelumnya sudah pernah dijalankan, jangan jalankan ulang schema penuh. Jalankan migrasi melalui **SQL Editor** Supabase dengan urutan berikut sebelum deploy kode terbaru:
+
+1. [`supabase/migrations/20261009_employee_selected_schedule.sql`](./supabase/migrations/20261009_employee_selected_schedule.sql), jika belum pernah dijalankan. Migrasi ini menambahkan shift pada tiap catatan absensi. Catatan lama memakai kategori yang dahulu ditetapkan untuk karyawan; jika informasi itu tidak tersedia, catatan lama diisi kategori **Karyawan Shift Pagi**. Migrasi juga mengunci kategori shift per karyawan per tanggal.
+2. [`supabase/migrations/20261009_attendance_schedule_snapshots.sql`](./supabase/migrations/20261009_attendance_schedule_snapshots.sql). Migrasi ini menyimpan snapshot jam masuk dan pulang pada setiap absensi. Untuk catatan lama, snapshot diisi dari jam kategori saat migrasi dijalankan (atau 07.00–17.00 jika kategori tidak ditemukan), karena perubahan jam terdahulu tidak memiliki riwayat yang dapat dipulihkan.
+
+Kedua migrasi aman dijalankan ulang.
 
 ### Pengembangan lokal
 
@@ -50,9 +55,10 @@ Jika skema dasar atau migrasi jadwal sebelumnya sudah pernah dijalankan, jangan 
 - Admin dapat menambah/menghapus nama, menambahkan kolom bertipe teks, angka, tanggal, dropdown, atau centang, serta memilih apakah kolom tambahan wajib diisi.
 - Tersedia lima kategori shift yang jamnya dapat diedit admin: Karyawan Shift Pagi (07.00–17.00), Karyawan Shift Siang (14.00–22.00), Admin 1 (07.00–17.00), Admin 2 (09.00–18.00), dan Koordinator (11.00–19.30). Karyawan memilih kategori yang sesuai dengan rolling shift mereka ketika mengisi formulir.
 - Toleransi awal 5 menit dan batas terlambat 15 menit berlaku untuk semua kategori; admin dapat mengubahnya. Jam pulang tiap kategori harus lebih akhir daripada jam masuk pada hari yang sama.
-- Datang sampai batas toleransi tidak dihitung terlambat; lewat toleransi sampai batas terlambat dihitung terlambat; setelah batas terlambat dihitung tidak masuk. Aturan aktif juga diterapkan pada rekap bulan sebelumnya.
+- Setiap catatan absensi menyimpan snapshot jam kategori yang berlaku ketika catatan dibuat. Rekap memakai snapshot tersebut, sehingga mengubah jam kategori hanya memengaruhi absensi baru dan tidak mengubah perhitungan catatan sebelumnya. Jika jam kategori diubah di antara pencatatan Datang dan Pulang, setiap catatan mempertahankan snapshot masing-masing.
+- Datang sampai batas toleransi tidak dihitung terlambat; lewat toleransi sampai batas terlambat dihitung terlambat; setelah batas terlambat dihitung tidak masuk. Toleransi dan batas terlambat tetap merupakan aturan global yang perubahan nilainya diterapkan saat rekap dihitung ulang.
 - Rekap bulanan menampilkan kategori shift yang digunakan serta terlambat, masuk awal, pulang terlambat, dan tidak masuk/libur per karyawan. Tidak masuk dihitung bila tidak ada absensi Datang atau absensi Datang melewati batas. Untuk hari ini, karyawan tanpa absensi baru dihitung tidak masuk setelah jam pulang kategori yang paling akhir.
-- Jam kategori yang sedang aktif digunakan untuk menilai absensi lama saat rekap dihitung ulang; perubahan jam jadwal memengaruhi perhitungan bulan-bulan sebelumnya.
+- Catatan absensi lama yang sudah ada sebelum migrasi snapshot akan menggunakan jam kategori terkini pada saat migrasi dilakukan. Karena riwayat perubahan jam sebelumnya tidak tersimpan, nilai historis sebelum migrasi tidak dapat dipulihkan.
 - Tanggal dan jam absensi dihitung memakai `APP_TIME_ZONE` (default `Asia/Makassar`), bukan zona waktu sementara mesin server Netlify.
 - Data foto berada di bucket Supabase Storage privat. Tautan foto panel admin ditandatangani dan hanya berlaku singkat.
 - Tabel database mengaktifkan Row Level Security tanpa akses langsung untuk pengguna anonim; API memakai service role key hanya di lingkungan server.

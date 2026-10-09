@@ -210,7 +210,7 @@ function renderRecord(record) {
   const attendanceType = record.type === "pulang" ? "Pulang" : "Datang";
   return `<tr>
     <td><span class="record-date">${escapeHtml(formatDate(record.createdAt))}</span><span class="record-time">${escapeHtml(formatTime(record.createdAt))}</span></td>
-    <td><strong>${escapeHtml(record.name)}</strong><span class="record-type">${attendanceType} · ${escapeHtml(record.scheduleLabel)}</span></td>
+    <td><strong>${escapeHtml(record.name)}</strong><span class="record-type">${attendanceType} · ${escapeHtml(record.scheduleLabel)} (${escapeHtml(record.scheduleStartTime)}–${escapeHtml(record.scheduleEndTime)})</span></td>
     <td><span class="record-note">${escapeHtml(record.note || "—")}</span>${custom}</td>
     <td>${photo}</td>
   </tr>`;
@@ -282,7 +282,7 @@ function renderDashboard(data) {
           </section>
           <section class="panel-card settings-card schedules-card">
             <div class="panel-title"><div><span class="step-label">KATEGORI JADWAL</span><h2>Jam masuk dan pulang tiap kategori</h2></div><span class="settings-count">${data.schedules.length} kategori</span></div>
-            <p class="settings-description">Ubah jam setiap kategori di sini. Jam pulang harus lebih akhir daripada jam masuk pada hari yang sama. Perubahan diterapkan pada absensi dan rekap kategori tersebut.</p>
+            <p class="settings-description">Jam yang diubah berlaku untuk absensi baru; setiap catatan tetap memakai snapshot jam saat dicatat. Jam pulang harus lebih akhir daripada jam masuk pada hari yang sama.</p>
             <div class="schedule-editor-list">${data.schedules.map(schedule => `
               <form class="schedule-editor-form" data-schedule-id="${escapeHtml(schedule.id)}">
                 <strong>${escapeHtml(schedule.label)}</strong>

@@ -48,7 +48,9 @@ create table if not exists public.attendance (
   created_at timestamptz not null default now(),
   created_local_date date not null,
   schedule_id text not null default 'employee-morning'
-    references public.attendance_schedules(id)
+    references public.attendance_schedules(id),
+  schedule_start_time text not null,
+  schedule_end_time text not null
 );
 
 create unique index if not exists attendance_person_date_type_case_insensitive

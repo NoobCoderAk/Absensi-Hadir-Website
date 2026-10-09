@@ -319,7 +319,7 @@ async function dashboardData() {
     database.from("attendance").select("id", { count: "exact", head: true }).gte("created_local_date", firstDay).lte("created_local_date", today),
     fetchAllRows(() => database.from("attendance").select("created_local_date").gte("created_local_date", firstDay).lte("created_local_date", today).order("created_local_date")),
     database.from("custom_fields").select("id,label,type,options_json,required").order("id"),
-    database.from("attendance").select("id,person_name,attendance_type,note,values_json,photo_path,created_at,schedule_id").order("id", { ascending: false }).limit(300),
+    database.from("attendance").select("id,person_name,attendance_type,note,values_json,photo_path,created_at,schedule_id,schedule_start_time,schedule_end_time").order("id", { ascending: false }).limit(300),
     database.from("people").select("id,name").order("name"),
     getAttendanceSchedules(),
     getAttendanceRules()
@@ -343,7 +343,9 @@ async function dashboardData() {
     values: record.values_json,
     hasPhoto: Boolean(record.photo_path),
     createdAt: record.created_at,
-    scheduleLabel: schedulesById.get(record.schedule_id)?.label ?? "Jadwal tidak diketahui"
+    scheduleLabel: schedulesById.get(record.schedule_id)?.label ?? "Jadwal tidak diketahui",
+    scheduleStartTime: record.schedule_start_time,
+    scheduleEndTime: record.schedule_end_time
   }));
 
   return {
@@ -381,7 +383,7 @@ async function monthlyAttendanceSummary(month) {
   const [records, people] = await Promise.all([
     queryEndDay > 0
       ? fetchAllRows(() => database.from("attendance")
-        .select("person_name,attendance_type,created_at,created_local_date,schedule_id")
+        .select("person_name,attendance_type,created_at,created_local_date,schedule_id,schedule_start_time,schedule_end_time")
         .gte("created_local_date", `${month}-01`)
         .lte("created_local_date", endDate)
         .order("created_local_date")
@@ -430,14 +432,14 @@ async function monthlyAttendanceSummary(month) {
       if (!arrival) {
         summary.absent += 1;
       } else {
-        const startMinutes = timeToMinutes(schedule.startTime);
+        const startMinutes = timeToMinutes(arrival.schedule_start_time);
         const minutesLate = attendanceMinutes(arrival.created_at) - startMinutes;
         if (minutesLate > rules.lateLimitMinutes) summary.absent += 1;
         else if (minutesLate > rules.toleranceMinutes) summary.late += 1;
         else if (minutesLate < 0) summary.early += 1;
       }
-      const endMinutes = schedule ? timeToMinutes(schedule.endTime) : null;
-      if (endMinutes !== null && departures.some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
+      if (departures.some(departure =>
+        attendanceMinutes(departure.created_at) > timeToMinutes(departure.schedule_end_time))) {
         summary.lateDeparture += 1;
       }
     }
@@ -450,7 +452,7 @@ async function monthlyAttendanceSummary(month) {
       if (firstEvent && !schedule) throw new Error(`Missing schedule for attendance by ${person.name}.`);
       if (schedule) summary.scheduleLabels.add(schedule.label);
       if (arrival) {
-        const startMinutes = timeToMinutes(schedule.startTime);
+        const startMinutes = timeToMinutes(arrival.schedule_start_time);
         const minutesLate = attendanceMinutes(arrival.created_at) - startMinutes;
         if (minutesLate > rules.lateLimitMinutes) summary.absent += 1;
         else if (minutesLate > rules.toleranceMinutes) summary.late += 1;
@@ -458,8 +460,8 @@ async function monthlyAttendanceSummary(month) {
       } else if (!firstEvent && nowMinutes >= latestShiftEnd) {
         summary.absent += 1;
       }
-      const endMinutes = schedule ? timeToMinutes(schedule.endTime) : null;
-      if (endMinutes !== null && (todayEvents?.pulang ?? []).some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
+      if ((todayEvents?.pulang ?? []).some(departure =>
+        attendanceMinutes(departure.created_at) > timeToMinutes(departure.schedule_end_time))) {
         summary.lateDeparture += 1;
       }
     }
@@ -640,7 +642,9 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
     photo_content_type: photoContentType,
     created_at: createdAt,
     created_local_date: today,
-    schedule_id: scheduleId
+    schedule_id: scheduleId,
+    schedule_start_time: schedule.startTime,
+    schedule_end_time: schedule.endTime
   }).select("id").single();
   if (inserted.error) {
     const cleanup = await database.storage.from(PHOTO_BUCKET).remove([photoPath]);
