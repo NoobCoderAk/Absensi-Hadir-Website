@@ -4,7 +4,9 @@ const adminView = $("#admin-view");
 const attendanceNav = $("#attendance-nav");
 const adminNav = $("#admin-nav");
 const toast = $("#toast");
-let currentForm = { people: [], fields: [], rules: null };
+let currentForm = { people: [], fields: [], rules: null, schedules: [] };
+let lockedScheduleId = null;
+let personShiftRequest = 0;
 let adminData = null;
 let toastTimer;
 let monthlyReportSequence = 0;
@@ -77,8 +79,13 @@ async function loadForm() {
   select.innerHTML = `<option value="">Pilih namamu</option>${currentForm.people.map(person =>
     `<option value="${escapeHtml(person.name)}">${escapeHtml(person.name)}</option>`
   ).join("")}`;
+  const scheduleSelect = $("#schedule-select");
+  scheduleSelect.innerHTML = `<option value="">Pilih shift hari ini</option>${currentForm.schedules.map(schedule =>
+    `<option value="${escapeHtml(schedule.id)}">${escapeHtml(schedule.label)} (${escapeHtml(schedule.startTime)}–${escapeHtml(schedule.endTime)})</option>`
+  ).join("")}`;
   $("#custom-fields").innerHTML = currentForm.fields.map(renderCustomInput).join("");
-  updateAttendanceScheduleHint();
+  lockedScheduleId = null;
+  await updateAttendanceScheduleHint();
   if (!currentForm.people.length) {
     select.disabled = true;
     select.innerHTML = `<option value="">Nama belum ditambahkan oleh admin</option>`;
@@ -94,17 +101,41 @@ async function loadForm() {
   }
 }
 
-function updateAttendanceScheduleHint() {
+async function updateAttendanceScheduleHint() {
   const selectedName = $("#person-select").value;
-  const person = currentForm.people.find(candidate => candidate.name === selectedName);
-  if (!person?.schedule) {
-    $("#attendance-rules-hint").textContent = "Pilih nama untuk melihat jadwal kerja. Absensi Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.";
+  const scheduleSelect = $("#schedule-select");
+  const requestId = ++personShiftRequest;
+  lockedScheduleId = null;
+  scheduleSelect.disabled = false;
+  scheduleSelect.value = "";
+  if (!selectedName) {
+    $("#attendance-rules-hint").textContent = "Pilih nama dan shift yang sedang dijalani hari ini. Datang dan Pulang harus menggunakan shift yang sama.";
     return;
   }
-  const { schedule, scheduleLabel } = person;
+  try {
+    const result = await api(`/api/attendance/shift?name=${encodeURIComponent(selectedName)}`);
+    if (requestId !== personShiftRequest) return;
+    lockedScheduleId = result.scheduleId;
+  } catch (error) {
+    if (requestId !== personShiftRequest) return;
+    $("#attendance-rules-hint").textContent = error.message;
+    return;
+  }
+  const schedule = currentForm.schedules.find(candidate => candidate.id === lockedScheduleId);
+  if (lockedScheduleId && !schedule) {
+    $("#attendance-rules-hint").textContent = "Shift absensi hari ini tidak ditemukan. Hubungi admin.";
+    return;
+  }
+  if (schedule) {
+    scheduleSelect.value = schedule.id;
+    scheduleSelect.disabled = true;
+  } else {
+    scheduleSelect.value = "";
+  }
   const tolerance = currentForm.rules.toleranceMinutes;
-  $("#attendance-rules-hint").textContent =
-    `Jadwal ${schedule.label || scheduleLabel}: ${schedule.startTime}–${schedule.endTime}. Toleransi terlambat ${tolerance} menit. Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.`;
+  $("#attendance-rules-hint").textContent = schedule
+    ? `Shift hari ini terkunci: ${schedule.label} (${schedule.startTime}–${schedule.endTime}). Gunakan shift yang sama untuk absensi berikutnya.`
+    : `Pilih shift yang sedang dijalani hari ini. Toleransi terlambat ${tolerance} menit. Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.`;
 }
 
 function renderAuth(configured) {
@@ -179,7 +210,7 @@ function renderRecord(record) {
   const attendanceType = record.type === "pulang" ? "Pulang" : "Datang";
   return `<tr>
     <td><span class="record-date">${escapeHtml(formatDate(record.createdAt))}</span><span class="record-time">${escapeHtml(formatTime(record.createdAt))}</span></td>
-    <td><strong>${escapeHtml(record.name)}</strong><span class="record-type">${attendanceType}</span></td>
+    <td><strong>${escapeHtml(record.name)}</strong><span class="record-type">${attendanceType} · ${escapeHtml(record.scheduleLabel)}</span></td>
     <td><span class="record-note">${escapeHtml(record.note || "—")}</span>${custom}</td>
     <td>${photo}</td>
   </tr>`;
@@ -263,18 +294,13 @@ function renderDashboard(data) {
           </section>
           <section class="panel-card settings-card">
             <div class="panel-title"><div><span class="step-label">DAFTAR PILIHAN</span><h2>Nama peserta</h2></div><span class="settings-count">${data.people.length}</span></div>
-            <p class="settings-description">Pilih kategori jadwal untuk setiap karyawan. Peserta melihat jadwalnya setelah memilih nama di formulir.</p>
+            <p class="settings-description">Tambahkan nama yang boleh dipilih pada formulir absensi. Karyawan memilih shift yang sedang dijalani setiap hari.</p>
             <form id="add-person-form" class="employee-add-form">
               <input name="name" maxlength="80" placeholder="Contoh: Andi Saputra" required>
-              <div class="select-wrap"><select name="scheduleId" aria-label="Kategori jadwal karyawan baru" required>${data.schedules.map(schedule => `<option value="${escapeHtml(schedule.id)}">${escapeHtml(schedule.label)} (${escapeHtml(schedule.startTime)}–${escapeHtml(schedule.endTime)})</option>`).join("")}</select><span class="select-chevron" aria-hidden="true">⌄</span></div>
               <button class="button button-primary" type="submit">Tambah</button>
             </form>
             <ul class="manage-list employee-list">${data.people.length ? data.people.map(person => `<li class="employee-manage-row">
-              <span><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.scheduleLabel)}</small></span>
-              <form class="employee-schedule-form" data-person-id="${person.id}">
-                <div class="select-wrap"><select name="scheduleId" aria-label="Jadwal ${escapeHtml(person.name)}">${data.schedules.map(schedule => `<option value="${escapeHtml(schedule.id)}"${schedule.id === person.scheduleId ? " selected" : ""}>${escapeHtml(schedule.label)}</option>`).join("")}</select><span class="select-chevron" aria-hidden="true">⌄</span></div>
-                <button class="button button-secondary" type="submit">Ubah</button>
-              </form>
+              <span><strong>${escapeHtml(person.name)}</strong></span>
               <button class="icon-button" data-delete-person="${person.id}" type="button" aria-label="Hapus ${escapeHtml(person.name)}">×</button>
             </li>`).join("") : '<li class="list-empty">Belum ada nama.</li>'}</ul>
           </section>
@@ -338,9 +364,9 @@ async function loadMonthlyReport(month) {
     $("#monthly-report-note").textContent = note;
     content.innerHTML = `
       <table class="monthly-table">
-        <thead><tr><th>Nama karyawan</th><th>Jadwal</th><th>Terlambat</th><th>Masuk awal</th><th>Pulang terlambat</th><th>Tidak masuk / libur</th></tr></thead>
+        <thead><tr><th>Nama karyawan</th><th>Shift digunakan</th><th>Terlambat</th><th>Masuk awal</th><th>Pulang terlambat</th><th>Tidak masuk / libur</th></tr></thead>
         <tbody>${report.employees.length ? report.employees.map(employee => `<tr>
-          <td><strong>${escapeHtml(employee.name)}</strong></td><td>${escapeHtml(employee.scheduleLabel)}</td>
+          <td><strong>${escapeHtml(employee.name)}</strong></td><td>${employee.scheduleLabels.map(escapeHtml).join(", ") || "—"}</td>
           <td>${employee.late}</td><td>${employee.early}</td><td>${employee.lateDeparture}</td><td>${employee.absent}</td>
         </tr>`).join("") : '<tr><td colspan="6" class="empty-cell">Belum ada nama karyawan.</td></tr>'}</tbody>
       </table>`;
@@ -364,7 +390,7 @@ function setAdminTab(tab) {
 
 attendanceNav.addEventListener("click", () => setView("attendance"));
 adminNav.addEventListener("click", () => setView("admin"));
-$("#person-select").addEventListener("change", updateAttendanceScheduleHint);
+$("#person-select").addEventListener("change", () => updateAttendanceScheduleHint());
 $("#today-date").textContent = new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
 
 $("#attendance-form").addEventListener("submit", async event => {
@@ -380,6 +406,7 @@ $("#attendance-form").addEventListener("submit", async event => {
   }
   const body = new FormData();
   body.append("name", $("#person-select").value);
+  body.append("scheduleId", lockedScheduleId || $("#schedule-select").value);
   body.append("attendanceType", $("#attendance-type").value);
   body.append("note", $("#attendance-note").value);
   body.append("values", JSON.stringify(values));
@@ -390,11 +417,13 @@ $("#attendance-form").addEventListener("submit", async event => {
   try {
     const result = await api("/api/attendance", { method: "POST", body });
     form.reset();
+    await updateAttendanceScheduleHint();
     $("#photo-name").textContent = "";
     $("#photo-preview").classList.add("hidden");
     feedback.textContent = result.message;
     feedback.className = "feedback feedback-success";
   } catch (error) {
+    if (error.status === 409) await updateAttendanceScheduleHint();
     feedback.textContent = error.message;
     feedback.className = "feedback feedback-error";
   } finally {
@@ -480,20 +509,6 @@ document.addEventListener("submit", async event => {
       await refreshDashboard();
       await loadForm();
       showToast("Nama berhasil ditambahkan.");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  } else if (form.matches(".employee-schedule-form")) {
-    event.preventDefault();
-    const { scheduleId } = Object.fromEntries(new FormData(form));
-    try {
-      const result = await api(`/api/admin/people/${form.dataset.personId}/schedule`, {
-        method: "PUT",
-        body: JSON.stringify({ scheduleId })
-      });
-      await refreshDashboard();
-      await loadForm();
-      showToast(result.message);
     } catch (error) {
       showToast(error.message, true);
     }

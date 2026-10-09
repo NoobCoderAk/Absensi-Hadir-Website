@@ -319,8 +319,8 @@ async function dashboardData() {
     database.from("attendance").select("id", { count: "exact", head: true }).gte("created_local_date", firstDay).lte("created_local_date", today),
     fetchAllRows(() => database.from("attendance").select("created_local_date").gte("created_local_date", firstDay).lte("created_local_date", today).order("created_local_date")),
     database.from("custom_fields").select("id,label,type,options_json,required").order("id"),
-    database.from("attendance").select("id,person_name,attendance_type,note,values_json,photo_path,created_at").order("id", { ascending: false }).limit(300),
-    database.from("people").select("id,name,schedule_id").order("name"),
+    database.from("attendance").select("id,person_name,attendance_type,note,values_json,photo_path,created_at,schedule_id").order("id", { ascending: false }).limit(300),
+    database.from("people").select("id,name").order("name"),
     getAttendanceSchedules(),
     getAttendanceRules()
   ]);
@@ -342,7 +342,8 @@ async function dashboardData() {
     note: record.note,
     values: record.values_json,
     hasPhoto: Boolean(record.photo_path),
-    createdAt: record.created_at
+    createdAt: record.created_at,
+    scheduleLabel: schedulesById.get(record.schedule_id)?.label ?? "Jadwal tidak diketahui"
   }));
 
   return {
@@ -355,11 +356,7 @@ async function dashboardData() {
     dailyCounts,
     records,
     rules,
-    people: unwrap(peopleRows).map(person => ({
-      ...publicPerson(person),
-      scheduleId: person.schedule_id,
-      scheduleLabel: schedulesById.get(person.schedule_id)?.label ?? person.schedule_id
-    })),
+    people: unwrap(peopleRows).map(publicPerson),
     schedules,
     fields
   };
@@ -384,20 +381,17 @@ async function monthlyAttendanceSummary(month) {
   const [records, people] = await Promise.all([
     queryEndDay > 0
       ? fetchAllRows(() => database.from("attendance")
-        .select("person_name,attendance_type,created_at,created_local_date")
+        .select("person_name,attendance_type,created_at,created_local_date,schedule_id")
         .gte("created_local_date", `${month}-01`)
         .lte("created_local_date", endDate)
         .order("created_local_date")
         .order("created_at"))
       : Promise.resolve([]),
-    fetchAllRows(() => database.from("people").select("name,created_local_date,schedule_id").order("name"))
+    fetchAllRows(() => database.from("people").select("name,created_local_date").order("name"))
   ]);
   const schedulesById = new Map(schedules.map(schedule => [schedule.id, schedule]));
-  const currentDayIncluded = isCurrentMonth && people.every(person => {
-    const schedule = schedulesById.get(person.schedule_id);
-    if (!schedule) throw new Error(`Missing schedule for employee ${person.name}.`);
-    return nowMinutes >= timeToMinutes(schedule.endTime);
-  });
+  const latestShiftEnd = Math.max(...schedules.map(schedule => timeToMinutes(schedule.endTime)));
+  const currentDayIncluded = isCurrentMonth && nowMinutes >= latestShiftEnd;
   const byPerson = new Map();
   for (const record of records) {
     const personKey = record.person_name.toLocaleLowerCase();
@@ -410,14 +404,10 @@ async function monthlyAttendanceSummary(month) {
   }
 
   const employees = people.map(person => {
-    const schedule = schedulesById.get(person.schedule_id);
-    if (!schedule) throw new Error(`Missing schedule for employee ${person.name}.`);
-    const startMinutes = timeToMinutes(schedule.startTime);
-    const endMinutes = timeToMinutes(schedule.endTime);
     const days = byPerson.get(person.name.toLocaleLowerCase()) ?? new Map();
     const summary = {
       name: person.name,
-      scheduleLabel: schedule.label,
+      scheduleLabels: new Set(),
       late: 0,
       early: 0,
       lateDeparture: 0,
@@ -433,15 +423,21 @@ async function monthlyAttendanceSummary(month) {
       const events = days.get(date);
       const arrival = events?.datang?.[0];
       const departures = events?.pulang ?? [];
+      const firstEvent = arrival ?? departures[0];
+      const schedule = firstEvent ? schedulesById.get(firstEvent.schedule_id) : null;
+      if (firstEvent && !schedule) throw new Error(`Missing schedule for attendance by ${person.name}.`);
+      if (schedule) summary.scheduleLabels.add(schedule.label);
       if (!arrival) {
         summary.absent += 1;
       } else {
+        const startMinutes = timeToMinutes(schedule.startTime);
         const minutesLate = attendanceMinutes(arrival.created_at) - startMinutes;
         if (minutesLate > rules.lateLimitMinutes) summary.absent += 1;
         else if (minutesLate > rules.toleranceMinutes) summary.late += 1;
         else if (minutesLate < 0) summary.early += 1;
       }
-      if (departures.some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
+      const endMinutes = schedule ? timeToMinutes(schedule.endTime) : null;
+      if (endMinutes !== null && departures.some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
         summary.lateDeparture += 1;
       }
     }
@@ -449,19 +445,25 @@ async function monthlyAttendanceSummary(month) {
     if (isCurrentMonth && today >= person.created_local_date) {
       const todayEvents = days.get(today);
       const arrival = todayEvents?.datang?.[0];
+      const firstEvent = arrival ?? todayEvents?.pulang?.[0];
+      const schedule = firstEvent ? schedulesById.get(firstEvent.schedule_id) : null;
+      if (firstEvent && !schedule) throw new Error(`Missing schedule for attendance by ${person.name}.`);
+      if (schedule) summary.scheduleLabels.add(schedule.label);
       if (arrival) {
+        const startMinutes = timeToMinutes(schedule.startTime);
         const minutesLate = attendanceMinutes(arrival.created_at) - startMinutes;
         if (minutesLate > rules.lateLimitMinutes) summary.absent += 1;
         else if (minutesLate > rules.toleranceMinutes) summary.late += 1;
         else if (minutesLate < 0) summary.early += 1;
-      } else if (nowMinutes >= endMinutes) {
+      } else if (!firstEvent && nowMinutes >= latestShiftEnd) {
         summary.absent += 1;
       }
-      if ((todayEvents?.pulang ?? []).some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
+      const endMinutes = schedule ? timeToMinutes(schedule.endTime) : null;
+      if (endMinutes !== null && (todayEvents?.pulang ?? []).some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
         summary.lateDeparture += 1;
       }
     }
-    return summary;
+    return { ...summary, scheduleLabels: [...summary.scheduleLabels] };
   });
 
   return {
@@ -502,21 +504,32 @@ app.use(express.json({ limit: "128kb" }));
 app.get("/api/form", async (_request, response) => {
   const database = getSupabase();
   const [people, fields, rules, schedulesRows] = await Promise.all([
-    database.from("people").select("id,name,schedule_id").order("name"),
+    database.from("people").select("id,name").order("name"),
     database.from("custom_fields").select("id,label,type,options_json,required").order("id"),
     getAttendanceRules(),
     getAttendanceSchedules()
   ]);
-  const schedules = schedulesRows.map(publicSchedule);
-  const schedulesById = new Map(schedules.map(schedule => [schedule.id, schedule]));
   return response.json({
-    people: unwrap(people).map(person => ({
-      ...publicPerson(person),
-      schedule: schedulesById.get(person.schedule_id) ?? null
-    })),
+    people: unwrap(people).map(publicPerson),
     fields: unwrap(fields).map(publicField),
-    rules
+    rules,
+    schedules: schedulesRows.map(publicSchedule)
   });
+});
+
+app.get("/api/attendance/shift", async (request, response) => {
+  const name = typeof request.query.name === "string" ? request.query.name.trim() : "";
+  if (!name || name.length > 80) return sendError(response, 400, "Pilih nama yang valid.");
+  const person = unwrap(await getSupabase().from("people").select("name").eq("name", name).maybeSingle());
+  if (!person) return sendError(response, 400, "Nama tidak ditemukan.");
+  const record = unwrap(await getSupabase().from("attendance")
+    .select("schedule_id")
+    .eq("person_name", person.name)
+    .eq("created_local_date", localDate())
+    .order("created_at")
+    .limit(1)
+    .maybeSingle());
+  return response.json({ scheduleId: record?.schedule_id ?? null });
 });
 
 app.get("/api/admin/status", async (_request, response) => {
@@ -528,11 +541,13 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
   const name = typeof request.body.name === "string" ? request.body.name.trim() : "";
   const note = typeof request.body.note === "string" ? request.body.note.trim() : "";
   const attendanceType = request.body.attendanceType;
+  const scheduleId = typeof request.body.scheduleId === "string" ? request.body.scheduleId : "";
   if (name.length === 0 || name.length > 80) return sendError(response, 400, "Pilih nama yang valid.");
   if (note.length > 2000) return sendError(response, 400, "Keterangan maksimal 2.000 karakter.");
   if (attendanceType !== "datang" && attendanceType !== "pulang") {
     return sendError(response, 400, "Pilih jenis absensi: Datang atau Pulang.");
   }
+  if (!scheduleId) return sendError(response, 400, "Pilih jadwal kerja hari ini.");
 
   let values;
   try {
@@ -576,15 +591,16 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
   }
 
   const personResult = await database.from("people")
-    .select("id,name,schedule_id")
+    .select("id,name")
     .eq("name", name)
     .maybeSingle();
   const person = unwrap(personResult);
   if (!person) return sendError(response, 400, "Nama tidak ditemukan. Muat ulang formulir dan pilih nama yang tersedia.");
   const scheduleRow = unwrap(await database.from("attendance_schedules")
     .select("id,label,start_time,end_time")
-    .eq("id", person.schedule_id)
-    .single());
+    .eq("id", scheduleId)
+    .maybeSingle());
+  if (!scheduleRow) return sendError(response, 400, "Pilih kategori jadwal yang valid.");
   const schedule = publicSchedule(scheduleRow);
   if (!request.file) return sendError(response, 400, "Foto wajib diunggah.");
   const photoContentType = request.file.mimetype.toLowerCase();
@@ -595,13 +611,18 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
 
   const today = localDate();
   const existing = await database.from("attendance")
-    .select("id")
+    .select("id,attendance_type,schedule_id")
     .eq("person_name", person.name)
     .eq("created_local_date", today)
-    .eq("attendance_type", attendanceType)
-    .maybeSingle();
-  unwrap(existing);
-  if (existing.data) return sendError(response, 409, `Absensi ${attendanceType} sudah tercatat untuk nama ini hari ini.`);
+    .order("created_at");
+  const existingRows = unwrap(existing);
+  if (existingRows.some(record => record.schedule_id !== scheduleId)) {
+    return sendError(response, 409, `Shift hari ini sudah dikunci sebagai ${publicSchedule(unwrap(await database.from("attendance_schedules")
+      .select("id,label,start_time,end_time").eq("id", existingRows[0].schedule_id).single())).label}. Gunakan shift yang sama.`);
+  }
+  if (existingRows.some(record => record.attendance_type === attendanceType)) {
+    return sendError(response, 409, `Absensi ${attendanceType} sudah tercatat untuk nama ini hari ini.`);
+  }
 
   const photoPath = `${today}/${crypto.randomUUID()}.${photoContentType.split("/")[1]}`;
   unwrap(await database.storage.from(PHOTO_BUCKET).upload(photoPath, request.file.buffer, {
@@ -618,13 +639,17 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
     photo_path: photoPath,
     photo_content_type: photoContentType,
     created_at: createdAt,
-    created_local_date: today
+    created_local_date: today,
+    schedule_id: scheduleId
   }).select("id").single();
   if (inserted.error) {
     const cleanup = await database.storage.from(PHOTO_BUCKET).remove([photoPath]);
     if (cleanup.error) console.error("Failed to clean up unattached attendance photo:", cleanup.error);
     if (inserted.error.code === "23505") {
       return sendError(response, 409, `Absensi ${attendanceType} sudah tercatat untuk nama ini hari ini.`);
+    }
+    if (inserted.error.code === "23514") {
+      return sendError(response, 409, "Shift hari ini sudah dikunci oleh absensi lain. Muat ulang formulir dan gunakan shift yang sama.");
     }
     throw inserted.error;
   }
@@ -737,44 +762,20 @@ admin.put("/schedules/:id", async (request, response) => {
 
 admin.post("/people", async (request, response) => {
   const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
-  const scheduleId = typeof request.body?.scheduleId === "string" ? request.body.scheduleId : "";
   if (name.length === 0 || name.length > 80) {
     return sendError(response, 400, "Nama wajib diisi (maksimal 80 karakter).");
   }
-  const schedule = unwrap(await getSupabase().from("attendance_schedules")
-    .select("id")
-    .eq("id", scheduleId)
-    .maybeSingle());
-  if (!schedule) return sendError(response, 400, "Pilih kategori jadwal yang valid.");
   const existingPeople = unwrap(await getSupabase().from("people").select("name"));
   if (existingPeople.some(person => person.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
     return sendError(response, 409, "Nama tersebut sudah ada.");
   }
   const inserted = await getSupabase().from("people").insert({
     name,
-    schedule_id: scheduleId,
     created_local_date: localDate()
   });
   if (inserted.error?.code === "23505") return sendError(response, 409, "Nama tersebut sudah ada.");
   unwrap(inserted);
   return response.json({ message: "Nama berhasil ditambahkan." });
-});
-
-admin.put("/people/:id/schedule", async (request, response) => {
-  const id = Number.parseInt(request.params.id, 10);
-  const scheduleId = typeof request.body?.scheduleId === "string" ? request.body.scheduleId : "";
-  if (!Number.isSafeInteger(id) || id < 1) return sendError(response, 404, "Nama tidak ditemukan.");
-  const database = getSupabase();
-  const schedule = unwrap(await database.from("attendance_schedules")
-    .select("id,label")
-    .eq("id", scheduleId)
-    .maybeSingle());
-  if (!schedule) return sendError(response, 400, "Pilih kategori jadwal yang valid.");
-  const updated = unwrap(await database.from("people").update({ schedule_id: scheduleId })
-    .eq("id", id)
-    .select("id"));
-  if (!updated.length) return sendError(response, 404, "Nama tidak ditemukan.");
-  return response.json({ message: `Jadwal karyawan diperbarui ke ${schedule.label}.` });
 });
 
 admin.delete("/people/:id", async (request, response) => {
