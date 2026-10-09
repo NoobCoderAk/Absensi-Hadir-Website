@@ -443,7 +443,9 @@ app.use((request, response, next) => {
   return next();
 });
 app.use((request, response, next) => {
-  if (!Buffer.isBuffer(request.body) || !request.is("application/json")) return next();
+  if (!Buffer.isBuffer(request.body) || request.body.length === 0 || !request.is("application/json")) {
+    return next();
+  }
   if (request.body.length > 128 * 1024) {
     return sendError(response, 413, "Ukuran data yang dikirim melebihi batas.");
   }
