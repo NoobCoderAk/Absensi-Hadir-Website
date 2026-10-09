@@ -527,6 +527,7 @@ $("#camera-start").addEventListener("click", async () => {
     video.srcObject = cameraStream;
     await video.play();
     video.classList.remove("hidden");
+    video.classList.toggle("camera-mirrored", cameraFacingMode === "user");
     $("#camera-start").classList.add("hidden");
     $("#camera-capture").classList.remove("hidden");
     $("#camera-capture").disabled = false;
@@ -569,6 +570,7 @@ $("#camera-switch").addEventListener("click", async () => {
     video.srcObject = cameraStream;
     await video.play();
     video.classList.remove("hidden");
+    video.classList.toggle("camera-mirrored", cameraFacingMode === "user");
     $("#camera-start").classList.add("hidden");
     $("#camera-capture").classList.remove("hidden");
     $("#camera-capture").disabled = false;
@@ -605,7 +607,12 @@ $("#camera-capture").addEventListener("click", async () => {
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
-      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      const context = canvas.getContext("2d");
+      if (cameraFacingMode === "user") {
+        context.translate(canvas.width, 0);
+        context.scale(-1, 1);
+      }
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
       blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.88 - Math.min(attempt, 4) * 0.1));
       if (!blob) throw new Error("Foto tidak dapat diproses. Coba ambil ulang.");
       if (blob.size <= maxFileSize) break;
