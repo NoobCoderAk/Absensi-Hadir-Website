@@ -313,13 +313,12 @@ async function dashboardData() {
   const today = localDate();
   const firstDay = dateOffset(today, -6);
   const database = getSupabase();
-  const [totalResult, todayResult, weekResult, dailyRows, fieldsRows, recordsRows, peopleRows, schedulesRows, rules] = await Promise.all([
+  const [totalResult, todayResult, weekResult, dailyRows, fieldsRows, peopleRows, schedulesRows, rules] = await Promise.all([
     database.from("attendance").select("id", { count: "exact", head: true }),
     database.from("attendance").select("id", { count: "exact", head: true }).eq("created_local_date", today),
     database.from("attendance").select("id", { count: "exact", head: true }).gte("created_local_date", firstDay).lte("created_local_date", today),
     fetchAllRows(() => database.from("attendance").select("created_local_date").gte("created_local_date", firstDay).lte("created_local_date", today).order("created_local_date")),
     database.from("custom_fields").select("id,label,type,options_json,required").order("id"),
-    database.from("attendance").select("id,person_name,attendance_type,note,values_json,photo_path,created_at,schedule_id,schedule_start_time,schedule_end_time").order("id", { ascending: false }).limit(300),
     database.from("people").select("id,name").order("name"),
     getAttendanceSchedules(),
     getAttendanceRules()
@@ -334,19 +333,6 @@ async function dashboardData() {
   });
   const fields = unwrap(fieldsRows).map(publicField);
   const schedules = schedulesRows.map(publicSchedule);
-  const schedulesById = new Map(schedules.map(schedule => [schedule.id, schedule]));
-  const records = unwrap(recordsRows).map(record => ({
-    id: record.id,
-    name: record.person_name,
-    type: record.attendance_type,
-    note: record.note,
-    values: record.values_json,
-    hasPhoto: Boolean(record.photo_path),
-    createdAt: record.created_at,
-    scheduleLabel: schedulesById.get(record.schedule_id)?.label ?? "Jadwal tidak diketahui",
-    scheduleStartTime: record.schedule_start_time,
-    scheduleEndTime: record.schedule_end_time
-  }));
 
   return {
     today,
@@ -356,7 +342,6 @@ async function dashboardData() {
       lastSevenDays: weekResult.count ?? 0
     },
     dailyCounts,
-    records,
     rules,
     people: unwrap(peopleRows).map(publicPerson),
     schedules,
@@ -716,6 +701,37 @@ admin.post("/logout", (request, response) => {
 });
 
 admin.get("/data", async (_request, response) => response.json(await dashboardData()));
+
+admin.get("/records", async (request, response) => {
+  const offset = request.query.offset === undefined ? 0 : Number(request.query.offset);
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
+    return sendError(response, 400, "Posisi riwayat tidak valid.");
+  }
+  const pageSize = 25;
+  const database = getSupabase();
+  const [rows, schedulesRows] = await Promise.all([
+    database.from("attendance")
+      .select("id,person_name,attendance_type,note,values_json,photo_path,created_at,schedule_id,schedule_start_time,schedule_end_time")
+      .order("id", { ascending: false })
+      .range(offset, offset + pageSize),
+    getAttendanceSchedules()
+  ]);
+  const schedulesById = new Map(schedulesRows.map(schedule => [schedule.id, schedule]));
+  const result = unwrap(rows);
+  const records = result.slice(0, pageSize).map(record => ({
+    id: record.id,
+    name: record.person_name,
+    type: record.attendance_type,
+    note: record.note,
+    values: record.values_json,
+    hasPhoto: Boolean(record.photo_path),
+    createdAt: record.created_at,
+    scheduleLabel: schedulesById.get(record.schedule_id)?.label ?? "Jadwal tidak diketahui",
+    scheduleStartTime: record.schedule_start_time,
+    scheduleEndTime: record.schedule_end_time
+  }));
+  return response.json({ records, hasMore: result.length > pageSize });
+});
 
 admin.get("/schedules", async (_request, response) => {
   return response.json({ schedules: (await getAttendanceSchedules()).map(publicSchedule) });

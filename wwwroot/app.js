@@ -8,11 +8,16 @@ let currentForm = { people: [], fields: [], rules: null, schedules: [] };
 let lockedScheduleId = null;
 let personShiftRequest = 0;
 let cameraStream = null;
+let cameraFacingMode = "environment";
 let capturedPhoto = null;
 let photoPreviewUrl = null;
 let adminData = null;
 let toastTimer;
 let monthlyReportSequence = 0;
+let recordsOffset = 0;
+let recordsLoaded = false;
+let recordsHasMore = false;
+let recordsLoading = false;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -220,6 +225,10 @@ function renderRecord(record) {
 }
 
 function renderDashboard(data) {
+  recordsOffset = 0;
+  recordsLoaded = false;
+  recordsHasMore = false;
+  recordsLoading = false;
   const days = data.dailyCounts || [];
   const maxCount = Math.max(1, ...days.map(day => day.count));
   const fieldTypes = { text: "Teks", number: "Angka", date: "Tanggal", select: "Pilihan", checkbox: "Centang" };
@@ -265,9 +274,13 @@ function renderDashboard(data) {
         <div id="monthly-report-content" class="table-scroll"><p class="empty-cell">Memuat rekap bulanan…</p></div>
       </section>
       <section class="panel-card records-card">
-        <div class="panel-title records-title"><div><span class="step-label">AKTIVITAS TERBARU</span><h2>Riwayat absensi</h2></div><span class="records-count">${data.records.length} terbaru</span></div>
+        <div class="panel-title records-title"><div><span class="step-label">AKTIVITAS TERBARU</span><h2>Riwayat absensi</h2></div><span id="records-count" class="records-count">Belum dimuat</span></div>
+        <div class="records-controls">
+          <p id="records-feedback" class="form-hint" role="status" aria-live="polite">Riwayat hanya dimuat saat diminta.</p>
+          <button id="load-records-button" class="button button-secondary" type="button">Muat riwayat</button>
+        </div>
         <div class="table-scroll"><table><thead><tr><th>Waktu</th><th>Nama / jenis</th><th>Keterangan &amp; kolom</th><th>Foto</th></tr></thead>
-          <tbody>${data.records.length ? data.records.map(renderRecord).join("") : '<tr><td colspan="4" class="empty-cell">Belum ada data absensi.</td></tr>'}</tbody>
+          <tbody id="records-table-body"><tr><td colspan="4" class="empty-cell">Klik “Muat riwayat” untuk menampilkan catatan.</td></tr></tbody>
         </table></div>
       </section>
     </section>
@@ -379,6 +392,42 @@ async function loadMonthlyReport(month) {
   }
 }
 
+async function loadAttendanceRecords() {
+  if (recordsLoading || !recordsHasMore && recordsLoaded) return;
+  const button = $("#load-records-button");
+  const feedback = $("#records-feedback");
+  const tableBody = $("#records-table-body");
+  recordsLoading = true;
+  button.disabled = true;
+  button.textContent = "Memuat…";
+  feedback.textContent = "Memuat 25 catatan riwayat…";
+  try {
+    const result = await api(`/api/admin/records?offset=${recordsOffset}`);
+    if (result.records.length) {
+      const emptyRow = tableBody.querySelector(".empty-cell");
+      if (emptyRow) tableBody.replaceChildren();
+      tableBody.insertAdjacentHTML("beforeend", result.records.map(renderRecord).join(""));
+    } else if (!recordsLoaded) {
+      tableBody.innerHTML = '<tr><td colspan="4" class="empty-cell">Belum ada data absensi.</td></tr>';
+    }
+    recordsOffset += result.records.length;
+    recordsLoaded = true;
+    recordsHasMore = result.hasMore;
+    $("#records-count").textContent = `${recordsOffset} dimuat`;
+    feedback.textContent = recordsHasMore
+      ? "Tampilkan 25 catatan berikutnya jika diperlukan."
+      : "Semua catatan riwayat telah dimuat.";
+  } catch (error) {
+    feedback.textContent = `Riwayat gagal dimuat: ${error.message}`;
+    showToast(error.message, true);
+  } finally {
+    recordsLoading = false;
+    button.disabled = false;
+    button.textContent = recordsHasMore ? "Muat 25 berikutnya" : recordsLoaded ? "Riwayat selesai" : "Coba lagi";
+    button.disabled = recordsLoaded && !recordsHasMore;
+  }
+}
+
 async function refreshDashboard() {
   adminData = await api("/api/admin/data");
   renderDashboard(adminData);
@@ -445,6 +494,7 @@ function stopCamera() {
   $("#camera-video").classList.add("hidden");
   $("#camera-capture").classList.add("hidden");
   $("#camera-capture").disabled = true;
+  $("#camera-switch").classList.add("hidden");
 }
 
 function clearCapturedPhoto() {
@@ -468,17 +518,23 @@ $("#camera-start").addEventListener("click", async () => {
   $("#camera-start").disabled = true;
   hint.textContent = "Meminta izin kamera…";
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: "environment" } }
+      video: { facingMode: { ideal: cameraFacingMode } }
     });
+    cameraStream = stream;
     const video = $("#camera-video");
     video.srcObject = cameraStream;
     await video.play();
     video.classList.remove("hidden");
+    $("#camera-start").classList.add("hidden");
     $("#camera-capture").classList.remove("hidden");
     $("#camera-capture").disabled = false;
-    hint.textContent = "Arahkan kamera, lalu ambil foto secara langsung.";
+    $("#camera-switch").textContent = cameraFacingMode === "environment"
+      ? "Gunakan kamera depan"
+      : "Gunakan kamera belakang";
+    $("#camera-switch").classList.remove("hidden");
+    hint.textContent = `Kamera ${cameraFacingMode === "environment" ? "belakang" : "depan"} aktif. Arahkan kamera, lalu ambil foto.`;
   } catch (error) {
     const message = error.name === "NotAllowedError"
       ? "Izin kamera ditolak. Izinkan akses kamera pada pengaturan browser lalu coba lagi."
@@ -487,9 +543,51 @@ $("#camera-start").addEventListener("click", async () => {
         : error.name === "NotReadableError"
           ? "Kamera sedang digunakan aplikasi lain. Tutup aplikasi tersebut lalu coba lagi."
           : "Kamera tidak dapat dibuka. Pastikan situs menggunakan HTTPS dan izin kamera diaktifkan.";
+    stopCamera();
+    $("#camera-start").classList.remove("hidden");
     hint.textContent = message;
   } finally {
     $("#camera-start").disabled = false;
+  }
+});
+
+$("#camera-switch").addEventListener("click", async () => {
+  const hint = $("#camera-hint");
+  const previousFacingMode = cameraFacingMode;
+  const nextFacingMode = previousFacingMode === "environment" ? "user" : "environment";
+  $("#camera-switch").disabled = true;
+  $("#camera-capture").disabled = true;
+  hint.textContent = "Mengganti kamera…";
+  stopCamera();
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: nextFacingMode } }
+    });
+    cameraFacingMode = nextFacingMode;
+    const video = $("#camera-video");
+    video.srcObject = cameraStream;
+    await video.play();
+    video.classList.remove("hidden");
+    $("#camera-start").classList.add("hidden");
+    $("#camera-capture").classList.remove("hidden");
+    $("#camera-capture").disabled = false;
+    $("#camera-switch").textContent = cameraFacingMode === "environment"
+      ? "Gunakan kamera depan"
+      : "Gunakan kamera belakang";
+    $("#camera-switch").classList.remove("hidden");
+    hint.textContent = `Kamera ${cameraFacingMode === "environment" ? "belakang" : "depan"} aktif. Arahkan kamera, lalu ambil foto.`;
+  } catch (error) {
+    const message = error.name === "NotAllowedError"
+      ? "Izin untuk mengganti kamera ditolak. Periksa izin kamera browser."
+      : error.name === "NotFoundError"
+        ? `Kamera ${nextFacingMode === "user" ? "depan" : "belakang"} tidak ditemukan pada perangkat ini.`
+        : "Kamera tidak dapat diganti. Coba buka kamera kembali.";
+    stopCamera();
+    $("#camera-start").classList.remove("hidden");
+    hint.textContent = message;
+  } finally {
+    $("#camera-switch").disabled = false;
   }
 });
 
@@ -547,6 +645,10 @@ document.addEventListener("click", async event => {
     } catch (error) {
       showToast(error.message, true);
     }
+    return;
+  }
+  if (event.target.closest("#load-records-button")) {
+    await loadAttendanceRecords();
     return;
   }
   const removePerson = event.target.closest("[data-delete-person]");

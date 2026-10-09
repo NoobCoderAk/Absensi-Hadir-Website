@@ -7,7 +7,7 @@ Aplikasi absensi berbasis JavaScript. Frontend statis di-host Netlify, API berja
 ### 1. Siapkan database Supabase
 
 1. Buat project Supabase baru.
-2. Buka **SQL Editor**, lalu jalankan seluruh isi [`supabase/schema.sql`](./supabase/schema.sql). Langkah ini membuat tabel kosong, lima kategori shift, aturan default absensi, pembatasan akses, rate limiter admin, dan bucket privat `attendance-photos`.
+2. Buka **SQL Editor**, lalu jalankan seluruh isi [`supabase/schema.sql`](./supabase/schema.sql). Ini adalah setup awal kanonis untuk database baru dan mencakup skema aplikasi terkini: lima kategori shift, pilihan shift per absensi, snapshot jam shift untuk mempertahankan aturan historis, aturan absensi default, pembatasan akses, rate limiter admin, dan bucket privat `attendance-photos`.
 3. Dari **Project Settings → API**, salin **Project URL** dan **service_role key**. Jangan pernah menaruh service role key di kode browser, repositori, atau variabel yang berawalan `VITE_`/`NEXT_PUBLIC_`.
 
 ### 2. Deploy situs di Netlify
@@ -28,7 +28,7 @@ Database Supabase baru dimulai kosong. Database SQLite lokal di `data/absensi.db
 
 ### Memperbarui project Supabase yang sudah dibuat
 
-Jika skema dasar atau migrasi jadwal sebelumnya sudah pernah dijalankan, jangan jalankan ulang schema penuh. Jalankan migrasi melalui **SQL Editor** Supabase dengan urutan berikut sebelum deploy kode terbaru:
+Untuk project Supabase yang sudah memiliki data, **jangan jalankan ulang** [`supabase/schema.sql`](./supabase/schema.sql), karena file tersebut ditujukan untuk setup awal project baru. Jalankan migrasi melalui **SQL Editor** Supabase dengan urutan berikut sebelum deploy kode terbaru:
 
 1. [`supabase/migrations/20261009_employee_selected_schedule.sql`](./supabase/migrations/20261009_employee_selected_schedule.sql), jika belum pernah dijalankan. Migrasi ini menambahkan shift pada tiap catatan absensi. Catatan lama memakai kategori yang dahulu ditetapkan untuk karyawan; jika informasi itu tidak tersedia, catatan lama diisi kategori **Karyawan Shift Pagi**. Migrasi juga mengunci kategori shift per karyawan per tanggal.
 2. [`supabase/migrations/20261009_attendance_schedule_snapshots.sql`](./supabase/migrations/20261009_attendance_schedule_snapshots.sql). Migrasi ini menyimpan snapshot jam masuk dan pulang pada setiap absensi. Untuk catatan lama, snapshot diisi dari jam kategori saat migrasi dijalankan (atau 07.00–17.00 jika kategori tidak ditemukan), karena perubahan jam terdahulu tidak memiliki riwayat yang dapat dipulihkan.
@@ -50,9 +50,10 @@ Kedua migrasi aman dijalankan ulang.
 
 ## Fitur dan aturan
 
-- Foto wajib diambil langsung dari kamera melalui browser; pemilihan berkas galeri tidak tersedia pada formulir. Browser meminta izin kamera dan situs harus dibuka melalui HTTPS (localhost diperbolehkan untuk pengembangan). Batas foto 3,5 MiB agar formulir tetap di bawah batas payload Netlify Functions. Akses kamera membantu mencegah pemilihan foto lama, tetapi tidak membuktikan lokasi pengambilan atau mencegah pemalsuan kamera/perangkat.
+- Foto wajib diambil langsung dari kamera melalui browser; pemilihan berkas galeri tidak tersedia pada formulir. Peserta dapat memilih kamera depan atau belakang jika perangkat mendukungnya. Browser meminta izin kamera dan situs harus dibuka melalui HTTPS (localhost diperbolehkan untuk pengembangan). Batas foto 3,5 MiB agar formulir tetap di bawah batas payload Netlify Functions. Akses kamera membantu mencegah pemilihan foto lama, tetapi tidak membuktikan lokasi pengambilan atau mencegah pemalsuan kamera/perangkat.
 - Setiap absensi wajib memilih shift aktif dan jenis **Datang** atau **Pulang**. Shift yang dipilih pada absensi pertama hari itu dikunci; absensi berikutnya pada tanggal yang sama harus menggunakan shift tersebut. Pada tanggal berikutnya, karyawan bebas memilih shift yang sedang dijalani. Setiap karyawan hanya dapat mengirim satu absensi untuk tiap jenis pada tanggal yang sama.
 - Admin dapat menambah/menghapus nama, menambahkan kolom bertipe teks, angka, tanggal, dropdown, atau centang, serta memilih apakah kolom tambahan wajib diisi.
+- Riwayat pada bagian Aktivitas Terbaru tidak dimuat saat dashboard dibuka. Admin dapat memintanya saat diperlukan; catatan ditampilkan bertahap sebanyak 25 per permintaan.
 - Tersedia lima kategori shift yang jamnya dapat diedit admin: Karyawan Shift Pagi (07.00–17.00), Karyawan Shift Siang (14.00–22.00), Admin 1 (07.00–17.00), Admin 2 (09.00–18.00), dan Koordinator (11.00–19.30). Karyawan memilih kategori yang sesuai dengan rolling shift mereka ketika mengisi formulir.
 - Toleransi awal 5 menit dan batas terlambat 15 menit berlaku untuk semua kategori; admin dapat mengubahnya. Jam pulang tiap kategori harus lebih akhir daripada jam masuk pada hari yang sama.
 - Setiap catatan absensi menyimpan snapshot jam kategori yang berlaku ketika catatan dibuat. Rekap memakai snapshot tersebut, sehingga mengubah jam kategori hanya memengaruhi absensi baru dan tidak mengubah perhitungan catatan sebelumnya. Jika jam kategori diubah di antara pencatatan Datang dan Pulang, setiap catatan mempertahankan snapshot masing-masing.

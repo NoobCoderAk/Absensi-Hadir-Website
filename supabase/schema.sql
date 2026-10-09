@@ -1,3 +1,7 @@
+-- Initial setup for a new Supabase project.
+-- Includes employee-selected shifts and per-record schedule-time snapshots.
+-- For an existing project, apply the ordered migrations documented in README.md.
+
 create table if not exists public.attendance_schedules (
   id text primary key,
   label text not null unique,

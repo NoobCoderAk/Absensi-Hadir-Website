@@ -142,6 +142,9 @@ input:focus, select:focus, textarea:focus { border-color: #80a791; box-shadow: 0
 .text-button { margin-top: 18px; text-decoration: none; font-size: 10px; }
 .records-card { margin-top: 14px; padding: 22px 0 0; }
 .records-title { padding: 0 22px 17px; align-items: center; }
+.records-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 22px 14px; }
+.records-controls .form-hint { margin: 0; }
+.records-controls .button { min-height: 34px; flex: 0 0 auto; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; text-align: left; }
 th { padding: 10px 14px; color: #929c94; background: #fafbfa; font-size: 9px; font-weight: 600; }
