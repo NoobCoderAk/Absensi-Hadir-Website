@@ -26,6 +26,10 @@ Aplikasi absensi berbasis JavaScript. Frontend statis di-host Netlify, API berja
 
 Database Supabase baru dimulai kosong. Database SQLite lokal di `data/absensi.db` dan kunci sesi lokal tidak dipindahkan maupun dihapus.
 
+### Memperbarui project Supabase yang sudah dibuat
+
+Jika skema dasar sudah pernah dijalankan, jangan jalankan ulang schema penuh. Jalankan [`supabase/migrations/20261009_employee_schedules.sql`](./supabase/migrations/20261009_employee_schedules.sql) sekali melalui **SQL Editor** Supabase sebelum deploy kode terbaru. Migrasi ini menambahkan lima kategori jadwal dan menempatkan karyawan yang sudah ada ke **Karyawan Shift Pagi**; admin dapat mengubah penempatan dari panel. Migrasi aman dijalankan ulang.
+
 ### Pengembangan lokal
 
 1. Pasang Node.js 22 atau yang lebih baru.
@@ -44,9 +48,11 @@ Database Supabase baru dimulai kosong. Database SQLite lokal di `data/absensi.db
 - Foto JPG, PNG, atau WebP wajib diunggah. Batas file adalah 3,5 MiB agar formulir multipart tetap di bawah batas payload Netlify Functions.
 - Setiap absensi wajib memilih **Datang** atau **Pulang**. Setiap karyawan hanya dapat mengirim satu absensi untuk tiap jenis pada tanggal yang sama.
 - Admin dapat menambah/menghapus nama, menambahkan kolom bertipe teks, angka, tanggal, dropdown, atau centang, serta memilih apakah kolom tambahan wajib diisi.
-- Aturan awal: jam masuk 08.00, jam pulang 17.00, toleransi 5 menit, batas terlambat 15 menit. Admin dapat mengubah aturan ini. Jam pulang harus lebih akhir daripada jam masuk di hari yang sama.
+- Setiap karyawan menggunakan salah satu dari lima kategori jadwal yang jamnya dapat diedit admin: Karyawan Shift Pagi (07.00–17.00), Karyawan Shift Siang (14.00–22.00), Admin 1 (07.00–17.00), Admin 2 (09.00–18.00), dan Koordinator (11.00–19.30). Admin memilih kategori saat menambah karyawan dan dapat mengubah kategori karyawan kapan pun.
+- Toleransi awal 5 menit dan batas terlambat 15 menit berlaku untuk semua kategori; admin dapat mengubahnya. Jam pulang tiap kategori harus lebih akhir daripada jam masuk pada hari yang sama.
 - Datang sampai batas toleransi tidak dihitung terlambat; lewat toleransi sampai batas terlambat dihitung terlambat; setelah batas terlambat dihitung tidak masuk. Aturan aktif juga diterapkan pada rekap bulan sebelumnya.
-- Rekap bulanan menampilkan terlambat, masuk awal, pulang terlambat, serta tidak masuk/libur. Tidak masuk dihitung bila tidak ada absensi Datang atau absensi Datang melewati batas. Hari ini belum dihitung tidak masuk sampai jam pulang, kecuali absensi Datang yang sudah melewati batas.
+- Rekap bulanan menampilkan jadwal serta terlambat, masuk awal, pulang terlambat, dan tidak masuk/libur per karyawan menggunakan jam kategori masing-masing. Tidak masuk dihitung bila tidak ada absensi Datang atau absensi Datang melewati batas. Hari ini, ketidakhadiran baru dihitung setelah jam pulang kategori karyawan tersebut, kecuali absensi Datang yang sudah melewati batas.
+- Jadwal kategori yang sedang aktif digunakan untuk menilai absensi lama saat rekap dihitung ulang; perubahan kategori atau jam jadwal memengaruhi perhitungan bulan-bulan sebelumnya.
 - Tanggal dan jam absensi dihitung memakai `APP_TIME_ZONE` (default `Asia/Makassar`), bukan zona waktu sementara mesin server Netlify.
 - Data foto berada di bucket Supabase Storage privat. Tautan foto panel admin ditandatangani dan hanya berlaku singkat.
 - Tabel database mengaktifkan Row Level Security tanpa akses langsung untuk pengguna anonim; API memakai service role key hanya di lingkungan server.

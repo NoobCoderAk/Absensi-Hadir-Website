@@ -171,18 +171,36 @@ td strong { color: var(--ink); font-size: 11px; font-weight: 600; }
 .monthly-table th:first-child, .monthly-table td:first-child { text-align: left; }
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
 .settings-card { padding: 22px; }
-.rules-card { grid-column: 1 / -1; }
+.rules-card, .schedules-card { grid-column: 1 / -1; }
 .rules-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .rules-form .field-label { margin-top: 8px; font-size: 10px; }
 .rules-explanation { grid-column: 1 / -1; margin: 12px 0 0; }
 .rules-form .button { margin-top: 16px; justify-self: start; }
+.schedule-editor-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.schedule-editor-form { display: grid; grid-template-columns: minmax(125px, 1.3fr) repeat(2, minmax(90px, 1fr)); align-items: end; gap: 9px; padding: 13px; border: 1px solid #edf0ec; border-radius: 10px; }
+.schedule-editor-form > strong { grid-column: 1 / -1; color: #44534a; font-size: 11px; }
+.schedule-time-field { display: grid; gap: 5px; color: #8a958d; font-size: 9px; }
+.schedule-time-field input { height: 38px !important; }
+.schedule-editor-form .button { grid-column: 1 / -1; justify-self: start; min-height: 35px; }
+.button-secondary { color: var(--green-dark); background: var(--green-pale); }
+.button-secondary:hover { background: #dbeade; }
 .settings-count { display: grid; min-width: 26px; height: 26px; place-items: center; padding: 0 6px; border-radius: 8px; color: var(--green); background: #edf4ed; font-size: 10px; font-weight: 600; }
 .settings-description { margin: 9px 0 18px; color: #929b94; font-size: 10px; line-height: 1.6; }
 .inline-form { display: flex; gap: 8px; }
 .inline-form input { min-width: 0; }
 .inline-form .button { min-width: 88px; }
+.employee-add-form { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(170px, 1.2fr) auto; gap: 8px; }
+.employee-add-form input, .employee-add-form select { height: 40px; font-size: 10px; }
+.employee-add-form .button { min-height: 40px; }
 .manage-list { margin: 15px 0 0; padding: 0; list-style: none; border-top: 1px solid #eef1ed; }
 .manage-list li { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #f0f2ef; color: #536158; font-size: 11px; }
+.employee-list li.employee-manage-row { min-height: 56px; }
+.employee-manage-row > span { flex: 1 1 100px; }
+.employee-schedule-form { display: flex; flex: 0 1 245px; align-items: center; gap: 6px; }
+.employee-schedule-form .select-wrap { min-width: 0; flex: 1; }
+.employee-schedule-form select { height: 34px; padding: 0 28px 0 8px; font-size: 9px; }
+.employee-schedule-form .select-chevron { right: 7px; font-size: 15px; }
+.employee-schedule-form .button { min-height: 34px; padding: 0 9px; font-size: 9px; }
 .manage-list li > span { min-width: 0; overflow-wrap: anywhere; }
 .manage-list li strong { display: block; color: #44534a; font-size: 10px; font-weight: 600; }
 .manage-list li small { display: block; margin-top: 3px; color: #9aa39c; font-size: 9px; }
@@ -215,7 +233,11 @@ td strong { color: var(--ink); font-size: 11px; font-weight: 600; }
   .analysis-grid { grid-template-columns: 1fr; }
   .quick-info { min-height: 195px; }
   .settings-grid { grid-template-columns: 1fr; }
-  .rules-card { grid-column: auto; }
+  .rules-card, .schedules-card { grid-column: auto; }
+  .schedule-editor-list { grid-template-columns: 1fr; }
+  .employee-add-form { grid-template-columns: 1fr; }
+  .employee-manage-row { flex-wrap: wrap; padding: 8px 0; }
+  .employee-schedule-form { flex-basis: calc(100% - 42px); }
   .password-card { grid-column: auto; grid-template-columns: 1fr; gap: 0; }
   .site-footer { padding: 0 20px; }
 }

@@ -78,8 +78,7 @@ async function loadForm() {
     `<option value="${escapeHtml(person.name)}">${escapeHtml(person.name)}</option>`
   ).join("")}`;
   $("#custom-fields").innerHTML = currentForm.fields.map(renderCustomInput).join("");
-  const rules = currentForm.rules;
-  $("#attendance-rules-hint").textContent = `Jam masuk ${rules.startTime}, jam pulang ${rules.endTime}. Absensi Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.`;
+  updateAttendanceScheduleHint();
   if (!currentForm.people.length) {
     select.disabled = true;
     select.innerHTML = `<option value="">Nama belum ditambahkan oleh admin</option>`;
@@ -93,6 +92,19 @@ async function loadForm() {
     select.disabled = false;
     $(".inline-hint")?.remove();
   }
+}
+
+function updateAttendanceScheduleHint() {
+  const selectedName = $("#person-select").value;
+  const person = currentForm.people.find(candidate => candidate.name === selectedName);
+  if (!person?.schedule) {
+    $("#attendance-rules-hint").textContent = "Pilih nama untuk melihat jadwal kerja. Absensi Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.";
+    return;
+  }
+  const { schedule, scheduleLabel } = person;
+  const tolerance = currentForm.rules.toleranceMinutes;
+  $("#attendance-rules-hint").textContent =
+    `Jadwal ${schedule.label || scheduleLabel}: ${schedule.startTime}–${schedule.endTime}. Toleransi terlambat ${tolerance} menit. Datang dan Pulang masing-masing hanya dapat dicatat sekali sehari.`;
 }
 
 function renderAuth(configured) {
@@ -228,23 +240,44 @@ function renderDashboard(data) {
     <section id="settings-panel" class="admin-panel hidden">
       <div class="settings-grid">
         <section class="panel-card settings-card rules-card">
-          <div class="panel-title"><div><span class="step-label">JADWAL &amp; KETERLAMBATAN</span><h2>Aturan absensi</h2></div><span class="settings-count">Aturan aktif</span></div>
-          <p class="settings-description">Aturan ini berlaku untuk semua peserta dan dipakai menghitung ulang rekap bulan sebelumnya. Jam mengikuti waktu server; jam pulang harus pada hari yang sama dengan jam masuk.</p>
+            <div class="panel-title"><div><span class="step-label">TOLERANSI &amp; KETERLAMBATAN</span><h2>Aturan absensi</h2></div><span class="settings-count">Berlaku untuk semua jadwal</span></div>
+            <p class="settings-description">Toleransi dan batas terlambat berlaku pada semua kategori. Perubahan aturan menghitung ulang rekap bulan sebelumnya.</p>
           <form id="attendance-rules-form" class="rules-form">
-            <label class="field-label" for="shift-start">Jam masuk</label><input id="shift-start" name="startTime" type="time" value="${escapeHtml(rules.startTime)}" required>
-            <label class="field-label" for="shift-end">Jam pulang</label><input id="shift-end" name="endTime" type="time" value="${escapeHtml(rules.endTime)}" required>
-            <label class="field-label" for="late-tolerance">Maksimal toleransi keterlambatan (menit)</label><input id="late-tolerance" name="toleranceMinutes" type="number" min="0" max="180" value="${rules.toleranceMinutes}" required>
-            <label class="field-label" for="late-limit">Batas akhir terlambat (menit setelah jam masuk)</label><input id="late-limit" name="lateLimitMinutes" type="number" min="1" max="360" value="${rules.lateLimitMinutes}" required>
-            <p class="form-hint rules-explanation">Datang sampai toleransi tidak terlambat; setelah toleransi hingga batas akhir dihitung terlambat; lewat batas akhir dihitung tidak masuk.</p>
-            <button class="button button-primary" type="submit">Simpan aturan</button>
-          </form>
-        </section>
-        <section class="panel-card settings-card">
-          <div class="panel-title"><div><span class="step-label">DAFTAR PILIHAN</span><h2>Nama peserta</h2></div><span class="settings-count">${data.people.length}</span></div>
-          <p class="settings-description">Nama ini akan muncul di dropdown formulir absensi.</p>
-          <form id="add-person-form" class="inline-form"><input name="name" maxlength="80" placeholder="Contoh: Andi Saputra" required><button class="button button-primary" type="submit">Tambah</button></form>
-          <ul class="manage-list">${data.people.length ? data.people.map(person => `<li><span>${escapeHtml(person.name)}</span><button class="icon-button" data-delete-person="${person.id}" type="button" aria-label="Hapus ${escapeHtml(person.name)}">×</button></li>`).join("") : '<li class="list-empty">Belum ada nama.</li>'}</ul>
-        </section>
+              <label class="field-label" for="late-tolerance">Maksimal toleransi keterlambatan (menit)</label><input id="late-tolerance" name="toleranceMinutes" type="number" min="0" max="180" value="${rules.toleranceMinutes}" required>
+              <label class="field-label" for="late-limit">Batas akhir terlambat (menit setelah jam masuk)</label><input id="late-limit" name="lateLimitMinutes" type="number" min="1" max="360" value="${rules.lateLimitMinutes}" required>
+              <p class="form-hint rules-explanation">Datang sampai toleransi tidak terlambat; setelah toleransi hingga batas akhir dihitung terlambat; lewat batas akhir dihitung tidak masuk.</p>
+              <button class="button button-primary" type="submit">Simpan aturan</button>
+            </form>
+          </section>
+          <section class="panel-card settings-card schedules-card">
+            <div class="panel-title"><div><span class="step-label">KATEGORI JADWAL</span><h2>Jam masuk dan pulang tiap kategori</h2></div><span class="settings-count">${data.schedules.length} kategori</span></div>
+            <p class="settings-description">Ubah jam setiap kategori di sini. Jam pulang harus lebih akhir daripada jam masuk pada hari yang sama. Perubahan diterapkan pada absensi dan rekap kategori tersebut.</p>
+            <div class="schedule-editor-list">${data.schedules.map(schedule => `
+              <form class="schedule-editor-form" data-schedule-id="${escapeHtml(schedule.id)}">
+                <strong>${escapeHtml(schedule.label)}</strong>
+                <label class="schedule-time-field"><span>Masuk</span><input name="startTime" type="time" value="${escapeHtml(schedule.startTime)}" required></label>
+                <label class="schedule-time-field"><span>Pulang</span><input name="endTime" type="time" value="${escapeHtml(schedule.endTime)}" required></label>
+                <button class="button button-secondary" type="submit">Simpan jam</button>
+              </form>`).join("")}
+            </div>
+          </section>
+          <section class="panel-card settings-card">
+            <div class="panel-title"><div><span class="step-label">DAFTAR PILIHAN</span><h2>Nama peserta</h2></div><span class="settings-count">${data.people.length}</span></div>
+            <p class="settings-description">Pilih kategori jadwal untuk setiap karyawan. Peserta melihat jadwalnya setelah memilih nama di formulir.</p>
+            <form id="add-person-form" class="employee-add-form">
+              <input name="name" maxlength="80" placeholder="Contoh: Andi Saputra" required>
+              <div class="select-wrap"><select name="scheduleId" aria-label="Kategori jadwal karyawan baru" required>${data.schedules.map(schedule => `<option value="${escapeHtml(schedule.id)}">${escapeHtml(schedule.label)} (${escapeHtml(schedule.startTime)}–${escapeHtml(schedule.endTime)})</option>`).join("")}</select><span class="select-chevron" aria-hidden="true">⌄</span></div>
+              <button class="button button-primary" type="submit">Tambah</button>
+            </form>
+            <ul class="manage-list employee-list">${data.people.length ? data.people.map(person => `<li class="employee-manage-row">
+              <span><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.scheduleLabel)}</small></span>
+              <form class="employee-schedule-form" data-person-id="${person.id}">
+                <div class="select-wrap"><select name="scheduleId" aria-label="Jadwal ${escapeHtml(person.name)}">${data.schedules.map(schedule => `<option value="${escapeHtml(schedule.id)}"${schedule.id === person.scheduleId ? " selected" : ""}>${escapeHtml(schedule.label)}</option>`).join("")}</select><span class="select-chevron" aria-hidden="true">⌄</span></div>
+                <button class="button button-secondary" type="submit">Ubah</button>
+              </form>
+              <button class="icon-button" data-delete-person="${person.id}" type="button" aria-label="Hapus ${escapeHtml(person.name)}">×</button>
+            </li>`).join("") : '<li class="list-empty">Belum ada nama.</li>'}</ul>
+          </section>
         <section class="panel-card settings-card">
           <div class="panel-title"><div><span class="step-label">SESUAIKAN FORM</span><h2>Kolom tambahan</h2></div><span class="settings-count">${data.fields.length}</span></div>
           <p class="settings-description">Tambahkan isian khusus seperti divisi, status, atau jam datang.</p>
@@ -299,17 +332,17 @@ async function loadMonthlyReport(month) {
     const pendingNote = report.daysPending
       ? report.currentDayIncluded
         ? ` · ${report.daysPending} hari tersisa di bulan ini belum direkap`
-        : ` · hari ini menunggu jam pulang (${report.rules.endTime}), ${report.daysPending} hari belum direkap`
+        : ` · hari ini menunggu jam pulang sesuai jadwal masing-masing, ${report.daysPending} hari belum direkap`
       : "";
-    const note = `Rekap ${formatMonth(report.month)} · ${report.daysIncluded} hari kerja kalender selesai dihitung${pendingNote}. Tidak masuk mencakup tidak mengisi Datang atau Datang melewati batas keterlambatan.`;
+    const note = `Rekap ${formatMonth(report.month)} · ${report.daysIncluded} hari kalender selesai dihitung${pendingNote}. Setiap karyawan dinilai menurut jam kategori jadwalnya; tidak masuk mencakup tidak mengisi Datang atau Datang melewati batas keterlambatan.`;
     $("#monthly-report-note").textContent = note;
     content.innerHTML = `
       <table class="monthly-table">
-        <thead><tr><th>Nama karyawan</th><th>Terlambat</th><th>Masuk awal</th><th>Pulang terlambat</th><th>Tidak masuk / libur</th></tr></thead>
+        <thead><tr><th>Nama karyawan</th><th>Jadwal</th><th>Terlambat</th><th>Masuk awal</th><th>Pulang terlambat</th><th>Tidak masuk / libur</th></tr></thead>
         <tbody>${report.employees.length ? report.employees.map(employee => `<tr>
-          <td><strong>${escapeHtml(employee.name)}</strong></td>
+          <td><strong>${escapeHtml(employee.name)}</strong></td><td>${escapeHtml(employee.scheduleLabel)}</td>
           <td>${employee.late}</td><td>${employee.early}</td><td>${employee.lateDeparture}</td><td>${employee.absent}</td>
-        </tr>`).join("") : '<tr><td colspan="5" class="empty-cell">Belum ada nama karyawan.</td></tr>'}</tbody>
+        </tr>`).join("") : '<tr><td colspan="6" class="empty-cell">Belum ada nama karyawan.</td></tr>'}</tbody>
       </table>`;
   } catch (error) {
     if (sequence !== monthlyReportSequence || !$("#monthly-report-content")) return;
@@ -331,6 +364,7 @@ function setAdminTab(tab) {
 
 attendanceNav.addEventListener("click", () => setView("attendance"));
 adminNav.addEventListener("click", () => setView("admin"));
+$("#person-select").addEventListener("change", updateAttendanceScheduleHint);
 $("#today-date").textContent = new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
 
 $("#attendance-form").addEventListener("submit", async event => {
@@ -418,6 +452,7 @@ document.addEventListener("click", async event => {
     } catch (error) {
       showToast(error.message, true);
     }
+    return;
   }
 });
 
@@ -439,11 +474,40 @@ document.addEventListener("submit", async event => {
     }
   } else if (form.id === "add-person-form") {
     event.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
     try {
-      await api("/api/admin/people", { method: "POST", body: JSON.stringify({ name: new FormData(form).get("name") }) });
+      await api("/api/admin/people", { method: "POST", body: JSON.stringify(data) });
       await refreshDashboard();
       await loadForm();
       showToast("Nama berhasil ditambahkan.");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  } else if (form.matches(".employee-schedule-form")) {
+    event.preventDefault();
+    const { scheduleId } = Object.fromEntries(new FormData(form));
+    try {
+      const result = await api(`/api/admin/people/${form.dataset.personId}/schedule`, {
+        method: "PUT",
+        body: JSON.stringify({ scheduleId })
+      });
+      await refreshDashboard();
+      await loadForm();
+      showToast(result.message);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  } else if (form.matches(".schedule-editor-form")) {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const result = await api(`/api/admin/schedules/${form.dataset.scheduleId}`, {
+        method: "PUT",
+        body: JSON.stringify(data)
+      });
+      await refreshDashboard();
+      await loadForm();
+      showToast(result.message);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -479,7 +543,6 @@ document.addEventListener("submit", async event => {
       const result = await api("/api/admin/rules", {
         method: "POST",
         body: JSON.stringify({
-          ...data,
           toleranceMinutes: Number(data.toleranceMinutes),
           lateLimitMinutes: Number(data.lateLimitMinutes)
         })

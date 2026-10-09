@@ -14,6 +14,7 @@ const MAX_PHOTO_SIZE = 3.5 * 1024 * 1024;
 const SESSION_COOKIE = "Absensi.Admin";
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
 const DEFAULT_TIME_ZONE = "Asia/Makassar";
+const SCHEDULE_ORDER = ["employee-morning", "employee-afternoon", "admin-1", "admin-2", "coordinator"];
 const configuredTimeZone = (process.env.APP_TIME_ZONE || "")
   .trim()
   .replace(/^(['"])(.*)\1$/, "$2")
@@ -137,14 +138,28 @@ function verifyPasswordHash(password, salt, scheme) {
 
 async function getAttendanceRules() {
   const row = unwrap(await getSupabase().from("attendance_rules")
-    .select("start_time,end_time,tolerance_minutes,late_limit_minutes")
+    .select("tolerance_minutes,late_limit_minutes")
     .eq("id", 1)
     .single());
   return {
-    startTime: row.start_time,
-    endTime: row.end_time,
     toleranceMinutes: row.tolerance_minutes,
     lateLimitMinutes: row.late_limit_minutes
+  };
+}
+
+async function getAttendanceSchedules() {
+  const schedules = await fetchAllRows(() => getSupabase().from("attendance_schedules")
+    .select("id,label,start_time,end_time")
+    .order("id"));
+  return schedules.sort((left, right) => SCHEDULE_ORDER.indexOf(left.id) - SCHEDULE_ORDER.indexOf(right.id));
+}
+
+function publicSchedule(row) {
+  return {
+    id: row.id,
+    label: row.label,
+    startTime: row.start_time,
+    endTime: row.end_time
   };
 }
 
@@ -298,14 +313,15 @@ async function dashboardData() {
   const today = localDate();
   const firstDay = dateOffset(today, -6);
   const database = getSupabase();
-  const [totalResult, todayResult, weekResult, dailyRows, fieldsRows, recordsRows, peopleRows, rules] = await Promise.all([
+  const [totalResult, todayResult, weekResult, dailyRows, fieldsRows, recordsRows, peopleRows, schedulesRows, rules] = await Promise.all([
     database.from("attendance").select("id", { count: "exact", head: true }),
     database.from("attendance").select("id", { count: "exact", head: true }).eq("created_local_date", today),
     database.from("attendance").select("id", { count: "exact", head: true }).gte("created_local_date", firstDay).lte("created_local_date", today),
     fetchAllRows(() => database.from("attendance").select("created_local_date").gte("created_local_date", firstDay).lte("created_local_date", today).order("created_local_date")),
     database.from("custom_fields").select("id,label,type,options_json,required").order("id"),
     database.from("attendance").select("id,person_name,attendance_type,note,values_json,photo_path,created_at").order("id", { ascending: false }).limit(300),
-    database.from("people").select("id,name").order("name"),
+    database.from("people").select("id,name,schedule_id").order("name"),
+    getAttendanceSchedules(),
     getAttendanceRules()
   ]);
   const dailyCountsMap = new Map();
@@ -317,6 +333,8 @@ async function dashboardData() {
     return { date, count: dailyCountsMap.get(date) ?? 0 };
   });
   const fields = unwrap(fieldsRows).map(publicField);
+  const schedules = schedulesRows.map(publicSchedule);
+  const schedulesById = new Map(schedules.map(schedule => [schedule.id, schedule]));
   const records = unwrap(recordsRows).map(record => ({
     id: record.id,
     name: record.person_name,
@@ -337,7 +355,12 @@ async function dashboardData() {
     dailyCounts,
     records,
     rules,
-    people: unwrap(peopleRows).map(publicPerson),
+    people: unwrap(peopleRows).map(person => ({
+      ...publicPerson(person),
+      scheduleId: person.schedule_id,
+      scheduleLabel: schedulesById.get(person.schedule_id)?.label ?? person.schedule_id
+    })),
+    schedules,
     fields
   };
 }
@@ -349,13 +372,11 @@ async function monthlyAttendanceSummary(month) {
   const isCurrentMonth = month === today.slice(0, 7);
   const lastCalendarDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   const rules = await getAttendanceRules();
-  const currentDayIncluded = isCurrentMonth &&
-    Number(now.hour) * 60 + Number(now.minute) >= timeToMinutes(rules.endTime);
-  let daysToInclude = lastCalendarDay;
-  if (isCurrentMonth) {
-    daysToInclude = Number(today.slice(8, 10));
-    if (!currentDayIncluded) daysToInclude -= 1;
-  }
+  const schedules = (await getAttendanceSchedules()).map(publicSchedule);
+  const nowMinutes = Number(now.hour) * 60 + Number(now.minute);
+  const daysToInclude = isCurrentMonth
+    ? Number(today.slice(8, 10)) - 1
+    : lastCalendarDay;
 
   const queryEndDay = isCurrentMonth ? Number(today.slice(8, 10)) : daysToInclude;
   const endDate = `${month}-${String(Math.max(queryEndDay, 1)).padStart(2, "0")}`;
@@ -369,8 +390,14 @@ async function monthlyAttendanceSummary(month) {
         .order("created_local_date")
         .order("created_at"))
       : Promise.resolve([]),
-    fetchAllRows(() => database.from("people").select("name,created_local_date").order("name"))
+    fetchAllRows(() => database.from("people").select("name,created_local_date,schedule_id").order("name"))
   ]);
+  const schedulesById = new Map(schedules.map(schedule => [schedule.id, schedule]));
+  const currentDayIncluded = isCurrentMonth && people.every(person => {
+    const schedule = schedulesById.get(person.schedule_id);
+    if (!schedule) throw new Error(`Missing schedule for employee ${person.name}.`);
+    return nowMinutes >= timeToMinutes(schedule.endTime);
+  });
   const byPerson = new Map();
   for (const record of records) {
     const personKey = record.person_name.toLocaleLowerCase();
@@ -382,11 +409,20 @@ async function monthlyAttendanceSummary(month) {
     events[record.attendance_type].push(record);
   }
 
-  const startMinutes = timeToMinutes(rules.startTime);
-  const endMinutes = timeToMinutes(rules.endTime);
   const employees = people.map(person => {
+    const schedule = schedulesById.get(person.schedule_id);
+    if (!schedule) throw new Error(`Missing schedule for employee ${person.name}.`);
+    const startMinutes = timeToMinutes(schedule.startTime);
+    const endMinutes = timeToMinutes(schedule.endTime);
     const days = byPerson.get(person.name.toLocaleLowerCase()) ?? new Map();
-    const summary = { name: person.name, late: 0, early: 0, lateDeparture: 0, absent: 0 };
+    const summary = {
+      name: person.name,
+      scheduleLabel: schedule.label,
+      late: 0,
+      early: 0,
+      lateDeparture: 0,
+      absent: 0
+    };
     const joinedAfterMonth = person.created_local_date.slice(0, 7) > month;
     const firstEmployedDay = person.created_local_date.slice(0, 7) === month
       ? Number(person.created_local_date.slice(8, 10))
@@ -410,7 +446,7 @@ async function monthlyAttendanceSummary(month) {
       }
     }
 
-    if (isCurrentMonth && !currentDayIncluded && today >= person.created_local_date) {
+    if (isCurrentMonth && today >= person.created_local_date) {
       const todayEvents = days.get(today);
       const arrival = todayEvents?.datang?.[0];
       if (arrival) {
@@ -418,6 +454,8 @@ async function monthlyAttendanceSummary(month) {
         if (minutesLate > rules.lateLimitMinutes) summary.absent += 1;
         else if (minutesLate > rules.toleranceMinutes) summary.late += 1;
         else if (minutesLate < 0) summary.early += 1;
+      } else if (nowMinutes >= endMinutes) {
+        summary.absent += 1;
       }
       if ((todayEvents?.pulang ?? []).some(departure => attendanceMinutes(departure.created_at) > endMinutes)) {
         summary.lateDeparture += 1;
@@ -428,10 +466,13 @@ async function monthlyAttendanceSummary(month) {
 
   return {
     month,
-    daysIncluded: Math.max(daysToInclude, 0),
-    daysPending: isCurrentMonth ? lastCalendarDay - Math.max(daysToInclude, 0) : 0,
+    daysIncluded: Math.max(daysToInclude, 0) + (currentDayIncluded ? 1 : 0),
+    daysPending: isCurrentMonth
+      ? lastCalendarDay - Math.max(daysToInclude, 0) - (currentDayIncluded ? 1 : 0)
+      : 0,
     currentDayIncluded,
     rules,
+    schedules,
     employees
   };
 }
@@ -460,13 +501,19 @@ app.use(express.json({ limit: "128kb" }));
 
 app.get("/api/form", async (_request, response) => {
   const database = getSupabase();
-  const [people, fields, rules] = await Promise.all([
-    database.from("people").select("id,name").order("name"),
+  const [people, fields, rules, schedulesRows] = await Promise.all([
+    database.from("people").select("id,name,schedule_id").order("name"),
     database.from("custom_fields").select("id,label,type,options_json,required").order("id"),
-    getAttendanceRules()
+    getAttendanceRules(),
+    getAttendanceSchedules()
   ]);
+  const schedules = schedulesRows.map(publicSchedule);
+  const schedulesById = new Map(schedules.map(schedule => [schedule.id, schedule]));
   return response.json({
-    people: unwrap(people).map(publicPerson),
+    people: unwrap(people).map(person => ({
+      ...publicPerson(person),
+      schedule: schedulesById.get(person.schedule_id) ?? null
+    })),
     fields: unwrap(fields).map(publicField),
     rules
   });
@@ -528,9 +575,17 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
     if (value.length > 0) savedValues[field.label] = value;
   }
 
-  const people = unwrap(await database.from("people").select("name"));
-  const person = people.find(candidate => candidate.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  const personResult = await database.from("people")
+    .select("id,name,schedule_id")
+    .eq("name", name)
+    .maybeSingle();
+  const person = unwrap(personResult);
   if (!person) return sendError(response, 400, "Nama tidak ditemukan. Muat ulang formulir dan pilih nama yang tersedia.");
+  const scheduleRow = unwrap(await database.from("attendance_schedules")
+    .select("id,label,start_time,end_time")
+    .eq("id", person.schedule_id)
+    .single());
+  const schedule = publicSchedule(scheduleRow);
   if (!request.file) return sendError(response, 400, "Foto wajib diunggah.");
   const photoContentType = request.file.mimetype.toLowerCase();
   if (!["image/jpeg", "image/png", "image/webp"].includes(photoContentType) ||
@@ -575,13 +630,13 @@ app.post("/api/attendance", limitAttendanceRequest, upload.single("photo"), asyn
   }
 
   const rules = await getAttendanceRules();
-  const minutesLate = attendanceMinutes(createdAt) - timeToMinutes(rules.startTime);
+  const minutesLate = attendanceMinutes(createdAt) - timeToMinutes(schedule.startTime);
   let message = `Absensi ${attendanceType} berhasil disimpan.`;
   if (attendanceType === "datang" && minutesLate > rules.lateLimitMinutes) {
     message = "Absensi datang tercatat, tetapi melewati batas keterlambatan dan dihitung tidak masuk.";
   } else if (attendanceType === "datang" && minutesLate > rules.toleranceMinutes) {
     message = "Absensi datang tercatat sebagai terlambat.";
-  } else if (attendanceType === "pulang" && attendanceMinutes(createdAt) > timeToMinutes(rules.endTime)) {
+  } else if (attendanceType === "pulang" && attendanceMinutes(createdAt) > timeToMinutes(schedule.endTime)) {
     message = "Absensi pulang tercatat terlambat.";
   }
   return response.json({ id: inserted.data.id, message });
@@ -633,6 +688,10 @@ admin.post("/logout", (request, response) => {
 
 admin.get("/data", async (_request, response) => response.json(await dashboardData()));
 
+admin.get("/schedules", async (_request, response) => {
+  return response.json({ schedules: (await getAttendanceSchedules()).map(publicSchedule) });
+});
+
 admin.get("/summary", async (request, response) => {
   const month = request.query.month;
   const currentMonth = localDate().slice(0, 7);
@@ -644,11 +703,7 @@ admin.get("/summary", async (request, response) => {
 });
 
 admin.post("/rules", async (request, response) => {
-  const { startTime, endTime, toleranceMinutes, lateLimitMinutes } = request.body ?? {};
-  const validTime = value => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-  if (!validTime(startTime) || !validTime(endTime) || timeToMinutes(endTime) <= timeToMinutes(startTime)) {
-    return sendError(response, 400, "Jam pulang harus lebih akhir daripada jam masuk.");
-  }
+  const { toleranceMinutes, lateLimitMinutes } = request.body ?? {};
   if (!Number.isInteger(toleranceMinutes) || toleranceMinutes < 0 || toleranceMinutes > 180) {
     return sendError(response, 400, "Toleransi keterlambatan harus antara 0 dan 180 menit.");
   }
@@ -657,27 +712,69 @@ admin.post("/rules", async (request, response) => {
     return sendError(response, 400, "Batas terlambat harus lebih besar daripada toleransi dan maksimal 360 menit.");
   }
   unwrap(await getSupabase().from("attendance_rules").update({
-    start_time: startTime,
-    end_time: endTime,
     tolerance_minutes: toleranceMinutes,
     late_limit_minutes: lateLimitMinutes
   }).eq("id", 1));
   return response.json({ message: "Aturan absensi berhasil disimpan.", rules: await getAttendanceRules() });
 });
 
+admin.put("/schedules/:id", async (request, response) => {
+  const { startTime, endTime } = request.body ?? {};
+  const validTime = value => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if (!validTime(startTime) || !validTime(endTime) || timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+    return sendError(response, 400, "Jam pulang harus lebih akhir daripada jam masuk pada hari yang sama.");
+  }
+  const updated = unwrap(await getSupabase().from("attendance_schedules").update({
+    start_time: startTime,
+    end_time: endTime
+  }).eq("id", request.params.id).select("id,label,start_time,end_time"));
+  if (!updated.length) return sendError(response, 404, "Kategori jadwal tidak ditemukan.");
+  return response.json({
+    message: `Jadwal ${updated[0].label} berhasil disimpan.`,
+    schedule: publicSchedule(updated[0])
+  });
+});
+
 admin.post("/people", async (request, response) => {
   const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+  const scheduleId = typeof request.body?.scheduleId === "string" ? request.body.scheduleId : "";
   if (name.length === 0 || name.length > 80) {
     return sendError(response, 400, "Nama wajib diisi (maksimal 80 karakter).");
   }
+  const schedule = unwrap(await getSupabase().from("attendance_schedules")
+    .select("id")
+    .eq("id", scheduleId)
+    .maybeSingle());
+  if (!schedule) return sendError(response, 400, "Pilih kategori jadwal yang valid.");
   const existingPeople = unwrap(await getSupabase().from("people").select("name"));
   if (existingPeople.some(person => person.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
     return sendError(response, 409, "Nama tersebut sudah ada.");
   }
-  const inserted = await getSupabase().from("people").insert({ name, created_local_date: localDate() });
+  const inserted = await getSupabase().from("people").insert({
+    name,
+    schedule_id: scheduleId,
+    created_local_date: localDate()
+  });
   if (inserted.error?.code === "23505") return sendError(response, 409, "Nama tersebut sudah ada.");
   unwrap(inserted);
   return response.json({ message: "Nama berhasil ditambahkan." });
+});
+
+admin.put("/people/:id/schedule", async (request, response) => {
+  const id = Number.parseInt(request.params.id, 10);
+  const scheduleId = typeof request.body?.scheduleId === "string" ? request.body.scheduleId : "";
+  if (!Number.isSafeInteger(id) || id < 1) return sendError(response, 404, "Nama tidak ditemukan.");
+  const database = getSupabase();
+  const schedule = unwrap(await database.from("attendance_schedules")
+    .select("id,label")
+    .eq("id", scheduleId)
+    .maybeSingle());
+  if (!schedule) return sendError(response, 400, "Pilih kategori jadwal yang valid.");
+  const updated = unwrap(await database.from("people").update({ schedule_id: scheduleId })
+    .eq("id", id)
+    .select("id"));
+  if (!updated.length) return sendError(response, 404, "Nama tidak ditemukan.");
+  return response.json({ message: `Jadwal karyawan diperbarui ke ${schedule.label}.` });
 });
 
 admin.delete("/people/:id", async (request, response) => {
