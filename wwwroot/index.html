@@ -75,12 +75,13 @@
             <label class="field-label" for="attendance-note">Keterangan <span class="optional-label">Opsional</span></label>
             <textarea id="attendance-note" name="note" rows="3" maxlength="2000" placeholder="Contoh: hadir, izin, atau catatan lainnya"></textarea>
             <div class="field-label photo-label">Foto <span class="required-star">*</span><span class="optional-label">Wajib diisi · maks. 3,5 MiB</span></div>
-            <label class="upload-box" for="photo-input">
-              <input id="photo-input" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required>
-              <span class="upload-icon" aria-hidden="true">↥</span>
-              <span class="upload-text"><strong>Pilih foto</strong><span>JPG, PNG, atau WebP</span></span>
-              <span id="photo-name" class="photo-name"></span>
-            </label>
+            <p id="camera-hint" class="form-hint camera-hint">Ambil foto langsung dengan kamera perangkat. Izin kamera diperlukan.</p>
+            <video id="camera-video" class="camera-preview hidden" autoplay muted playsinline aria-label="Pratinjau kamera"></video>
+            <div class="camera-actions">
+              <button id="camera-start" class="button button-secondary" type="button">Buka kamera</button>
+              <button id="camera-capture" class="button button-primary hidden" type="button" disabled>Ambil foto</button>
+              <button id="camera-retake" class="button button-secondary hidden" type="button">Ambil ulang</button>
+            </div>
             <img id="photo-preview" class="photo-preview hidden" alt="Pratinjau foto yang akan diunggah">
             <button class="button button-primary submit-button" type="submit">
               <span>Kirim absensi</span><span aria-hidden="true">→</span>

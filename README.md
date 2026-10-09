@@ -50,7 +50,7 @@ Kedua migrasi aman dijalankan ulang.
 
 ## Fitur dan aturan
 
-- Foto JPG, PNG, atau WebP wajib diunggah. Batas file adalah 3,5 MiB agar formulir multipart tetap di bawah batas payload Netlify Functions.
+- Foto wajib diambil langsung dari kamera melalui browser; pemilihan berkas galeri tidak tersedia pada formulir. Browser meminta izin kamera dan situs harus dibuka melalui HTTPS (localhost diperbolehkan untuk pengembangan). Batas foto 3,5 MiB agar formulir tetap di bawah batas payload Netlify Functions. Akses kamera membantu mencegah pemilihan foto lama, tetapi tidak membuktikan lokasi pengambilan atau mencegah pemalsuan kamera/perangkat.
 - Setiap absensi wajib memilih shift aktif dan jenis **Datang** atau **Pulang**. Shift yang dipilih pada absensi pertama hari itu dikunci; absensi berikutnya pada tanggal yang sama harus menggunakan shift tersebut. Pada tanggal berikutnya, karyawan bebas memilih shift yang sedang dijalani. Setiap karyawan hanya dapat mengirim satu absensi untuk tiap jenis pada tanggal yang sama.
 - Admin dapat menambah/menghapus nama, menambahkan kolom bertipe teks, angka, tanggal, dropdown, atau centang, serta memilih apakah kolom tambahan wajib diisi.
 - Tersedia lima kategori shift yang jamnya dapat diedit admin: Karyawan Shift Pagi (07.00–17.00), Karyawan Shift Siang (14.00–22.00), Admin 1 (07.00–17.00), Admin 2 (09.00–18.00), dan Koordinator (11.00–19.30). Karyawan memilih kategori yang sesuai dengan rolling shift mereka ketika mengisi formulir.

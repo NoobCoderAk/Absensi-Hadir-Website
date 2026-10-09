@@ -7,6 +7,9 @@ const toast = $("#toast");
 let currentForm = { people: [], fields: [], rules: null, schedules: [] };
 let lockedScheduleId = null;
 let personShiftRequest = 0;
+let cameraStream = null;
+let capturedPhoto = null;
+let photoPreviewUrl = null;
 let adminData = null;
 let toastTimer;
 let monthlyReportSequence = 0;
@@ -398,6 +401,12 @@ $("#attendance-form").addEventListener("submit", async event => {
   const form = event.currentTarget;
   const submit = $(".submit-button", form);
   const feedback = $("#attendance-feedback");
+  if (!capturedPhoto) {
+    feedback.textContent = "Ambil foto menggunakan kamera sebelum mengirim absensi.";
+    feedback.className = "feedback feedback-error";
+    $("#camera-start").focus();
+    return;
+  }
   const values = {};
   for (const field of currentForm.fields) {
     const input = $(`[data-field-id="${field.id}"]`, form);
@@ -410,16 +419,14 @@ $("#attendance-form").addEventListener("submit", async event => {
   body.append("attendanceType", $("#attendance-type").value);
   body.append("note", $("#attendance-note").value);
   body.append("values", JSON.stringify(values));
-  const photo = $("#photo-input").files[0];
-  if (photo) body.append("photo", photo);
+  body.append("photo", capturedPhoto);
   submit.disabled = true;
   feedback.className = "feedback hidden";
   try {
     const result = await api("/api/attendance", { method: "POST", body });
     form.reset();
+    clearCapturedPhoto();
     await updateAttendanceScheduleHint();
-    $("#photo-name").textContent = "";
-    $("#photo-preview").classList.add("hidden");
     feedback.textContent = result.message;
     feedback.className = "feedback feedback-success";
   } catch (error) {
@@ -431,23 +438,99 @@ $("#attendance-form").addEventListener("submit", async event => {
   }
 });
 
-$("#photo-input").addEventListener("change", event => {
-  const file = event.target.files[0];
-  const preview = $("#photo-preview");
-  if (!file) {
-    $("#photo-name").textContent = "";
-    preview.classList.add("hidden");
-    preview.removeAttribute("src");
+function stopCamera() {
+  cameraStream?.getTracks().forEach(track => track.stop());
+  cameraStream = null;
+  $("#camera-video").srcObject = null;
+  $("#camera-video").classList.add("hidden");
+  $("#camera-capture").classList.add("hidden");
+  $("#camera-capture").disabled = true;
+}
+
+function clearCapturedPhoto() {
+  stopCamera();
+  capturedPhoto = null;
+  $("#camera-start").classList.remove("hidden");
+  $("#camera-retake").classList.add("hidden");
+  $("#photo-preview").classList.add("hidden");
+  $("#photo-preview").removeAttribute("src");
+  if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+  photoPreviewUrl = null;
+  $("#camera-hint").textContent = "Ambil foto langsung dengan kamera perangkat. Izin kamera diperlukan.";
+}
+
+$("#camera-start").addEventListener("click", async () => {
+  const hint = $("#camera-hint");
+  if (!navigator.mediaDevices?.getUserMedia) {
+    hint.textContent = "Browser tidak mendukung akses kamera. Buka situs melalui HTTPS di browser terbaru.";
     return;
   }
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 3.5 * 1024 * 1024) {
-    event.target.value = "";
-    showToast("Pilih foto JPG, PNG, atau WebP dengan ukuran maksimal 3,5 MiB.", true);
+  $("#camera-start").disabled = true;
+  hint.textContent = "Meminta izin kamera…";
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "environment" } }
+    });
+    const video = $("#camera-video");
+    video.srcObject = cameraStream;
+    await video.play();
+    video.classList.remove("hidden");
+    $("#camera-capture").classList.remove("hidden");
+    $("#camera-capture").disabled = false;
+    hint.textContent = "Arahkan kamera, lalu ambil foto secara langsung.";
+  } catch (error) {
+    const message = error.name === "NotAllowedError"
+      ? "Izin kamera ditolak. Izinkan akses kamera pada pengaturan browser lalu coba lagi."
+      : error.name === "NotFoundError"
+        ? "Kamera tidak ditemukan pada perangkat ini."
+        : error.name === "NotReadableError"
+          ? "Kamera sedang digunakan aplikasi lain. Tutup aplikasi tersebut lalu coba lagi."
+          : "Kamera tidak dapat dibuka. Pastikan situs menggunakan HTTPS dan izin kamera diaktifkan.";
+    hint.textContent = message;
+  } finally {
+    $("#camera-start").disabled = false;
+  }
+});
+
+$("#camera-capture").addEventListener("click", async () => {
+  const video = $("#camera-video");
+  if (!cameraStream || !video.videoWidth || !video.videoHeight) {
+    $("#camera-hint").textContent = "Kamera belum siap. Tunggu sebentar lalu coba lagi.";
     return;
   }
-  $("#photo-name").textContent = file.name;
-  preview.src = URL.createObjectURL(file);
-  preview.classList.remove("hidden");
+  const maxFileSize = 3.5 * 1024 * 1024;
+  let scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight));
+  let blob;
+  try {
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.88 - Math.min(attempt, 4) * 0.1));
+      if (!blob) throw new Error("Foto tidak dapat diproses. Coba ambil ulang.");
+      if (blob.size <= maxFileSize) break;
+      scale *= 0.8;
+    }
+    if (!blob || blob.size > maxFileSize) throw new Error("Ukuran foto masih terlalu besar. Coba ambil ulang.");
+    capturedPhoto = new File([blob], `absensi-${Date.now()}.jpg`, { type: "image/jpeg" });
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    photoPreviewUrl = URL.createObjectURL(capturedPhoto);
+    $("#photo-preview").src = photoPreviewUrl;
+    $("#photo-preview").classList.remove("hidden");
+    stopCamera();
+    $("#camera-start").classList.add("hidden");
+    $("#camera-retake").classList.remove("hidden");
+    $("#camera-hint").textContent = "Foto siap dikirim. Ambil ulang jika hasilnya belum sesuai.";
+  } catch (error) {
+    $("#camera-hint").textContent = error.message;
+  }
+});
+
+$("#camera-retake").addEventListener("click", () => {
+  clearCapturedPhoto();
+  $("#camera-start").click();
 });
 
 document.addEventListener("click", async event => {
