@@ -13,7 +13,12 @@ const HOST = process.env.HOST || "0.0.0.0";
 const MAX_PHOTO_SIZE = 3.5 * 1024 * 1024;
 const SESSION_COOKIE = "Absensi.Admin";
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
-const APP_TIME_ZONE = process.env.APP_TIME_ZONE || "Asia/Makassar";
+const DEFAULT_TIME_ZONE = "Asia/Makassar";
+const configuredTimeZone = (process.env.APP_TIME_ZONE || "")
+  .trim()
+  .replace(/^(['"])(.*)\1$/, "$2")
+  .trim();
+let APP_TIME_ZONE = configuredTimeZone || DEFAULT_TIME_ZONE;
 const STATIC_DIRECTORY = path.join(__dirname, "wwwroot");
 const PHOTO_BUCKET = "attendance-photos";
 const app = express();
@@ -27,7 +32,10 @@ let sessionSecret;
 try {
   new Intl.DateTimeFormat("en-US", { timeZone: APP_TIME_ZONE });
 } catch {
-  throw new Error("APP_TIME_ZONE must be a valid IANA time zone.");
+  console.warn(
+    `Invalid APP_TIME_ZONE ${JSON.stringify(process.env.APP_TIME_ZONE)}; using ${DEFAULT_TIME_ZONE}.`
+  );
+  APP_TIME_ZONE = DEFAULT_TIME_ZONE;
 }
 
 function getSupabase() {

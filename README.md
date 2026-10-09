@@ -17,7 +17,7 @@ Aplikasi absensi berbasis JavaScript. Frontend statis di-host Netlify, API berja
    - `SUPABASE_URL`: Project URL Supabase.
    - `SUPABASE_SERVICE_ROLE_KEY`: service role key dari Supabase.
    - `SESSION_SECRET`: secret acak minimal 32 byte. Buat dengan `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`.
-   - `APP_TIME_ZONE`: `Asia/Makassar` untuk zona UTC+08. Ubah jika lokasi operasional memakai zona waktu lain yang valid, misalnya `Asia/Jakarta` atau `Asia/Jayapura`.
+   - `APP_TIME_ZONE` (opsional): `Asia/Makassar` untuk zona UTC+08. Jika tidak disetel atau nilainya tidak valid, server memakai `Asia/Makassar`; nilai tidak valid akan dicatat sebagai peringatan pada log fungsi. Zona waktu lain yang valid misalnya `Asia/Jakarta` atau `Asia/Jayapura`.
    - `COOKIE_SECURE`: `true`.
    - `TRUST_PROXY`: `true`.
 3. Deploy ulang setelah mengisi environment variables.
